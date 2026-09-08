@@ -457,38 +457,6 @@ namespace sparrow
         SPARROW_API value_iterator erase_values(const_value_iterator pos, size_type count);
 
         /**
-         * @brief Rebuilds every child array from its current values and updates the length.
-         *
-         * Each child is snapshotted value-by-value, transformed by \p transform, then
-         * rebuilt (empty_like + append) and swapped in. Used by insert_value and
-         * erase_values, which share this whole flow and differ only in the transform.
-         *
-         * @param new_length The length the struct array must have after the rebuild.
-         * @param transform Callable invoked as `transform(values, child_index)` with the
-         *                  child's snapshotted values (in-out), before the child is rebuilt.
-         */
-        template <class TRANSFORM>
-        void rebuild_children(size_type new_length, TRANSFORM&& transform)
-        {
-            std::vector<array> new_children;
-            new_children.reserve(children_count());
-            for (std::size_t child_index = 0; child_index < children_count(); ++child_index)
-            {
-                auto new_values = snapshot_array(make_array_view(*m_children[child_index]));
-                std::forward<TRANSFORM>(transform)(new_values, child_index);
-                array child = make_array_view(*m_children[child_index]);
-                array new_child = array_empty_like(child);
-                append_values(new_child, new_values);
-                new_children.push_back(std::move(new_child));
-            }
-            get_arrow_proxy().set_length(new_length);
-            for (std::size_t child_index = 0; child_index < new_children.size(); ++child_index)
-            {
-                set_child(std::move(new_children[child_index]), child_index);
-            }
-        }
-
-        /**
          * @brief Gets mutable reference to struct at specified index.
          *
          * @param i Index of the struct to access
@@ -520,6 +488,39 @@ namespace sparrow
          */
         [[nodiscard]] SPARROW_API children_type make_children();
 
+    private:
+
+        /**
+         * @brief Rebuilds every child array from its current values and updates the length.
+         *
+         * Each child is snapshotted value-by-value, transformed by \p transform, then
+         * rebuilt (empty_like + append) and swapped in. Used by insert_value and
+         * erase_values, which share this whole flow and differ only in the transform.
+         *
+         * @param new_length The length the struct array must have after the rebuild.
+         * @param transform Callable invoked as `transform(values, child_index)` with the
+         *                  child's snapshotted values (in-out), before the child is rebuilt.
+         */
+        template <class TRANSFORM>
+        void rebuild_children(size_type new_length, TRANSFORM&& transform)
+        {
+            std::vector<array> new_children;
+            new_children.reserve(children_count());
+            for (std::size_t child_index = 0; child_index < children_count(); ++child_index)
+            {
+                auto new_values = snapshot_array(make_array_view(*m_children[child_index]));
+                transform(new_values, child_index);
+                array child = make_array_view(*m_children[child_index]);
+                array new_child = array_empty_like(child);
+                append_values(new_child, new_values);
+                new_children.push_back(std::move(new_child));
+            }
+            get_arrow_proxy().set_length(new_length);
+            for (std::size_t child_index = 0; child_index < new_children.size(); ++child_index)
+            {
+                set_child(std::move(new_children[child_index]), child_index);
+            }
+        }
 
         // data members
         children_type m_children;  ///< Collection of child arrays (fields)
@@ -561,11 +562,7 @@ namespace sparrow
         size_type count = 0;
         for (auto it = first; it != last; ++it, ++count)
         {
-            insert_value(
-                std::next(value_cbegin(), static_cast<std::ptrdiff_t>(index + count)),
-                *it,
-                1
-            );
+            insert_value(std::next(value_cbegin(), static_cast<std::ptrdiff_t>(index + count)), *it, 1);
         }
         return std::next(value_begin(), static_cast<std::ptrdiff_t>(index));
     }

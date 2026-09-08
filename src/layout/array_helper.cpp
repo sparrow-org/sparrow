@@ -31,15 +31,15 @@ namespace sparrow
         array_traits::value_type default_value(const array& source)
         {
             return source.visit(
-                [](const auto& typed_array) -> array_traits::value_type
+                []<typename T>(const T& typed_array) -> array_traits::value_type
                 {
-                    using value_type = typename std::decay_t<decltype(typed_array)>::inner_value_type;
+                    using value_type = typename T::inner_value_type;
                     if constexpr (std::same_as<value_type, array_traits::inner_value_type>)
                     {
                         return std::visit(
-                            [](const auto& value) -> array_traits::value_type
+                            []<typename U>(const U& value) -> array_traits::value_type
                             {
-                                using alternative_type = std::decay_t<decltype(value)>;
+                                using alternative_type = U;
                                 return nullable<alternative_type>(value);
                             },
                             value_type{}
@@ -117,9 +117,9 @@ namespace sparrow
     {
         using return_type = array_traits::inner_value_type;
         return visit(
-            [](const auto& impl) -> return_type
+            []<typename T>(const T& impl) -> return_type
             {
-                using value_type = typename std::decay_t<decltype(impl)>::inner_value_type;
+                using value_type = T::inner_value_type;
                 return value_type();
             },
             ar
@@ -130,10 +130,9 @@ namespace sparrow
     {
         const auto value = array_default_element_value(ar);
         return std::visit(
-            [](const auto& element) -> array_traits::value_type
+            []<typename T>(const T& element) -> array_traits::value_type
             {
-                using value_type = std::remove_cvref_t<decltype(element)>;
-                return nullable<value_type>(element);
+                return nullable<T>(element);
             },
             value
         );
@@ -145,9 +144,8 @@ namespace sparrow
         using const_reference_base_type = typename array_traits::const_reference::base_type;
 
         return std::visit(
-            [](const auto& typed_value) -> return_type
+            []<typename nullable_type>(const nullable_type& typed_value) -> return_type
             {
-                using nullable_type = std::decay_t<decltype(typed_value)>;
                 using source_value_type = std::remove_cvref_t<typename nullable_type::value_type>;
 
                 if constexpr (std::same_as<source_value_type, std::string_view>)
@@ -187,9 +185,9 @@ namespace sparrow
         using value_base_type = typename array_traits::value_type::base_type;
 
         return std::visit(
-            [](const auto& typed_value) -> array
+            []<typename T>(const T& typed_value) -> array
             {
-                using nullable_type = std::decay_t<decltype(typed_value)>;
+                using nullable_type = T;
                 using source_value_type = std::remove_cvref_t<typename nullable_type::value_type>;
 
                 if constexpr (std::same_as<source_value_type, null_type>)
