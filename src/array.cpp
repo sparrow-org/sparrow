@@ -27,6 +27,31 @@
 
 namespace sparrow
 {
+    namespace
+    {
+        template <class Array, class Iterator>
+        void insert_repeated(
+            Array& destination,
+            std::size_t index,
+            Iterator first,
+            Iterator last,
+            std::size_t count
+        )
+        {
+            const auto inserted_size = static_cast<std::ptrdiff_t>(std::distance(first, last));
+            auto current_index = static_cast<std::ptrdiff_t>(index);
+            for (std::size_t copy = 0; copy < count; ++copy)
+            {
+                destination.insert(
+                    std::next(destination.cbegin(), current_index),
+                    first,
+                    last
+                );
+                current_index += inserted_size;
+            }
+        }
+    }
+
     array::array(ArrowArray&& array, ArrowSchema&& schema)
         : p_array(array_factory(arrow_proxy(std::move(array), std::move(schema))))
     {
@@ -213,64 +238,22 @@ namespace sparrow
                         source_array.cbegin(),
                         static_cast<std::ptrdiff_t>(last_index)
                     );
-                    using source_input_value = std::remove_cvref_t<decltype(nullable_get(*source_first))>;
-                    using destination_input_value = std::remove_cvref_t<
-                        decltype(nullable_get(std::declval<typename array_type::value_type&>()))>;
-                    constexpr bool can_insert_directly = std::same_as<source_input_value, destination_input_value>;
-
-                    const auto dest_pos = std::next(destination.cbegin(), static_cast<std::ptrdiff_t>(pos_index));
-
                     if (&destination == &source_array)
                     {
                         // Self-insertion: snapshot first to avoid iterator invalidation.
-                        const std::vector<typename array_type::value_type> temp(source_first, source_last);
-                        auto current_offset = static_cast<std::ptrdiff_t>(pos_index);
-                        for (size_type i = 0; i < count; ++i)
-                        {
-                            destination.insert(
-                                std::next(destination.cbegin(), current_offset),
-                                temp.cbegin(),
-                                temp.cend()
-                            );
-                            current_offset += static_cast<std::ptrdiff_t>(temp.size());
-                        }
-                    }
-                    else if constexpr (can_insert_directly)
-                    {
-                        // Types match, no aliasing: insert directly from source iterators.
-                        const auto elem_count = static_cast<std::ptrdiff_t>(last_index - first_index);
-                        auto current_offset = static_cast<std::ptrdiff_t>(pos_index);
-                        for (size_type i = 0; i < count; ++i)
-                        {
-                            destination.insert(
-                                std::next(destination.cbegin(), current_offset),
-                                source_first,
-                                source_last
-                            );
-                            current_offset += elem_count;
-                        }
+                        const std::vector<typename array_type::value_type> values(source_first, source_last);
+                        insert_repeated(destination, pos_index, values.cbegin(), values.cend(), count);
                     }
                     else
                     {
-                        // Type mismatch (e.g. nullable<string_view> -> nullable<string>):
-                        const auto elem_count = static_cast<std::ptrdiff_t>(last_index - first_index);
-                        const auto converting_view = std::ranges::subrange(source_first, source_last)
-                                                     | std::views::transform(
-                                                         [](const auto& elem) -> typename array_type::value_type
-                                                         {
-                                                             return typename array_type::value_type(elem);
-                                                         }
-                                                     );
-                        auto current_offset = static_cast<std::ptrdiff_t>(pos_index);
-                        for (size_type i = 0; i < count; ++i)
-                        {
-                            destination.insert(
-                                std::next(destination.cbegin(), current_offset),
-                                converting_view.begin(),
-                                converting_view.end()
-                            );
-                            current_offset += elem_count;
-                        }
+                        const auto values = std::ranges::subrange(source_first, source_last)
+                                            | std::views::transform(
+                                                [](const auto& element) -> typename array_type::value_type
+                                                {
+                                                    return typename array_type::value_type(element);
+                                                }
+                                            );
+                        insert_repeated(destination, pos_index, values.begin(), values.end(), count);
                     }
                 }
                 else

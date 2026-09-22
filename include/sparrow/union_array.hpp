@@ -15,7 +15,18 @@
 #pragma once
 
 #include <array>
+#include <charconv>
+#include <cstdint>
+#include <iterator>
+#include <limits>
+#include <numeric>
 #include <optional>
+#include <ranges>
+#include <span>
+#include <string_view>
+#include <utility>
+#include <variant>
+#include <vector>
 
 #include "sparrow/array_api.hpp"
 #include "sparrow/arrow_interface/arrow_flag_utils.hpp"
@@ -57,6 +68,23 @@ namespace sparrow
             {
                 return sparrow::data_type::SPARSE_UNION;
             }
+        };
+
+        inline constexpr std::size_t union_no_child = std::numeric_limits<std::size_t>::max();
+
+        /**
+         * @brief One row of a rebuild plan.
+         *
+         * A row is either a copy of an existing child's row (@c child / @c row), or an inserted
+         * value, in which case @c child is union_no_child and @c row indexes the plan's
+         * inserted-values list.
+         */
+        struct union_rebuild_value
+        {
+            std::size_t child = union_no_child;  ///< Source child, or union_no_child when inserted
+            std::size_t row = 0;                 ///< Row of the source child, or inserted-value index
+            bool force_null = false;             ///< Copy the row as null (sparse union filler row)
+            bool inserted = false;               ///< True when the entry is an inserted value
         };
     }
 
@@ -339,17 +367,128 @@ namespace sparrow
         [[nodiscard]] constexpr const_reverse_iterator crend() const;
 
         /**
-         * @brief Sets all null values to the specified value.
+         * @brief Inserts copies of a value before `pos`.
          *
-         * This operation modifies the underlying data values but not the validity bitmap.
-         * The bitmap remains unchanged, so the elements will still be considered null.
-         * Only the actual stored values are replaced.
+         * Rebuilds the type-ID buffer and child arrays. Complexity is
+         * O(N + U*C) for dense unions and O(N*C + U*C) for sparse unions,
+         * with O(N + C) and O(N*C) temporary storage respectively. N is the
+         * resulting length, C the child count, and U the number of distinct
+         * inserted alternatives. Requires offset zero; batch insertions are
+         * more efficient than repeated single-value insertions.
          *
-         * @param value The value to assign to null elements
+         * @return Iterator to the first inserted value.
+         */
+        iterator insert(const_iterator pos, const_reference value, size_type count = 1);
+
+        /**
+         * @brief Inserts copies of an owned value before `pos`.
+         * @return Iterator to the first inserted value.
+         * @note Same complexity and offset requirement as the other insert overload.
+         */
+        iterator
+        insert(const_iterator pos, const array_traits::value_type& value, size_type count = 1);
+
+        /**
+         * @brief Inserts a range before `pos`, repeated `count` times.
+         * @return Iterator to the first inserted value.
+         * @note Complexity is O(K + N) dense or O(K + N*C) sparse, plus O(U*C)
+         *       for type matching; K is the input length. Single-pass ranges are
+         *       materialized once when necessary.
+         */
+        template <std::input_iterator InputIt>
+        iterator insert(const_iterator pos, InputIt first, InputIt last, size_type count = 1)
+        {
+            if (count == 0)
+            {
+                return iterator_at(static_cast<size_type>(pos - cbegin()));
+            }
+
+            if constexpr (std::forward_iterator<InputIt>)
+            {
+                auto input_values = std::ranges::subrange(first, last);
+                if constexpr (std::same_as<std::remove_cvref_t<std::iter_reference_t<InputIt>>, array_traits::value_type>)
+                {
+                    return insert_materialized(pos, input_values, count);
+                }
+                else
+                {
+                    auto values = input_values
+                                  | std::views::transform(
+                                      [](const auto& value) -> array_traits::value_type
+                                      {
+                                          return array_materialize_element(value);
+                                      }
+                                  );
+                    return insert_materialized(pos, values, count);
+                }
+            }
+            else
+            {
+                std::vector<array_traits::value_type> values;
+                for (; first != last; ++first)
+                {
+                    if constexpr (std::same_as<std::remove_cvref_t<decltype(*first)>, array_traits::value_type>)
+                    {
+                        values.push_back(*first);
+                    }
+                    else
+                    {
+                        values.push_back(array_materialize_element(*first));
+                    }
+                }
+                return insert_materialized(pos, values, count);
+            }
+        }
+
+        /**
+         * @brief Erases the value at `pos`.
+         * @return Iterator following the erased value.
+         * @note Complexity is O(N) for dense unions and O(N*C) for sparse unions; requires offset zero.
+         */
+        iterator erase(const_iterator pos);
+
+        /**
+         * @brief Erases the half-open range [`first`, `last`).
+         * @return Iterator following the erased range.
+         * @note Complexity is O(N) for dense unions and O(N*C) for sparse unions; requires offset zero.
+         */
+        iterator erase(const_iterator first, const_iterator last);
+
+        /**
+         * @brief Appends a borrowed value.
+         * @note Equivalent to inserting before `end()`; complexity is O(N) dense or O(N*C) sparse.
+         */
+        void push_back(const_reference value);
+
+        /**
+         * @brief Appends an owned value.
+         * @note Equivalent to inserting before `end()`; complexity is O(N) dense or O(N*C) sparse.
+         */
+        void push_back(const array_traits::value_type& value);
+
+        /**
+         * @brief Resizes the array, default-inserting any appended values.
+         * @note Complexity is O(N) dense or O(N*C) sparse when the length changes;
+         *       no-op is O(1) and mutations require offset zero.
+         */
+        void resize(size_type new_length);
+
+        /**
+         * @brief Resizes the array, inserting `value` when it grows.
+         * @note Complexity is O(N) dense or O(N*C) sparse when the length changes; requires offset zero.
+         */
+        void resize(size_type new_length, const_reference value);
+
+        /**
+         * @brief Resizes the array, inserting `value` when it grows.
+         * @note Complexity is O(N) dense or O(N*C) sparse when the length changes; requires offset zero.
+         */
+        void resize(size_type new_length, const array_traits::value_type& value);
+
+        /**
+         * @brief Replaces stored values at null positions.
          *
-         * @post All null positions contain the specified value
-         * @post Validity bitmap remains unchanged
-         * @post Elements are still logically null despite having a value
+         * Complexity is O(N); the validity state and logical nullness are unchanged.
          */
         constexpr void zero_null_values(const inner_value_type& value)
         {
@@ -363,16 +502,22 @@ namespace sparrow
         using type_id_map = std::array<std::uint8_t, TYPE_ID_MAP_SIZE>;
 
         /**
-         * @brief Parses type ID mapping from Arrow format string.
+         * @brief Extracts child type IDs from an Arrow union format string.
          *
-         * @param format_string Arrow format string containing type ID mappings
-         * @return Array mapping type IDs to child indices
+         * @param format_string Arrow format string containing type IDs
+         * @return Type ID for each child, in child order
          *
-         * @pre format_string must be valid Arrow union format ("+du:" or "+su:" prefix)
-         * @post Returns valid type ID to child index mapping
-         * @post Mapping is used for efficient type dispatch
+         * @pre format_string must be valid Arrow union format ("+ud:" or "+us:" prefix)
          */
-        static constexpr type_id_map parse_type_id_map(std::string_view format_string);
+        static std::vector<std::uint8_t> child_type_ids_from_format(std::string_view format_string);
+
+        /**
+         * @brief Creates a type-ID lookup table from child type IDs.
+         *
+         * @param child_type_ids Type ID for each child, in child order
+         * @return Array mapping type IDs to child indices
+         */
+        static constexpr type_id_map make_type_id_map(std::span<const std::uint8_t> child_type_ids);
 
         /**
          * @brief Creates type ID mapping from child index to type ID mapping.
@@ -462,6 +607,98 @@ namespace sparrow
         constexpr union_array_crtp_base(self_type&& rhs) = default;
         constexpr self_type& operator=(self_type&& rhs) = default;
 
+        template <class VALUE>
+        void resize_impl(size_type new_length, VALUE&& value)
+        {
+            const auto current_size = size();
+            if (new_length < current_size)
+            {
+                erase_values(new_length, current_size - new_length);
+            }
+            else if (new_length > current_size)
+            {
+                insert(cend(), std::forward<VALUE>(value), new_length - current_size);
+            }
+        }
+
+        iterator iterator_at(size_type index)
+        {
+            return iterator(functor_type{&this->derived_cast()}, index);
+        }
+
+        /**
+         * @brief Appends one rebuild entry per element in [from, to), each referring to its
+         *        current child slot.
+         */
+        void append_rebuild_entries(
+            std::vector<detail::union_rebuild_value>& entries,
+            size_type from,
+            size_type to
+        ) const
+        {
+            for (size_type index = from; index < to; ++index)
+            {
+                entries.push_back(detail::union_rebuild_value{
+                    .child = m_type_id_map[p_type_ids[index]],
+                    .row = this->derived_cast().element_offset(index)
+                });
+            }
+        }
+
+        template <std::ranges::forward_range R>
+            requires std::same_as<std::ranges::range_value_t<R>, array_traits::value_type>
+        iterator insert_materialized(const_iterator pos, R&& values, size_type count)
+        {
+            const auto pos_index = static_cast<size_type>(pos - cbegin());
+            if (count == 0 || std::ranges::empty(values))
+            {
+                return iterator_at(pos_index);
+            }
+
+            SPARROW_ASSERT_TRUE(m_proxy.offset() == 0);
+            SPARROW_ASSERT_TRUE(pos_index <= size());
+
+            const auto old_size = size();
+            std::vector<array_traits::value_type> inserted(values.begin(), values.end());
+            const auto value_count = static_cast<size_type>(inserted.size());
+            std::vector<detail::union_rebuild_value> entries;
+            entries.reserve(old_size + value_count * count);
+
+            append_rebuild_entries(entries, 0, pos_index);
+            for (size_type repetition = 0; repetition < count; ++repetition)
+            {
+                for (size_type value_index = 0; value_index < value_count; ++value_index)
+                {
+                    entries.push_back(detail::union_rebuild_value{
+                        .row = value_index,
+                        .inserted = true
+                    });
+                }
+            }
+            append_rebuild_entries(entries, pos_index, old_size);
+            return this->derived_cast().rebuild_in_place(
+                std::move(entries),
+                std::move(inserted),
+                pos_index
+            );
+        }
+
+        iterator erase_values(size_type first, size_type count);
+
+        /// @brief Rebuilds this array from @p values, the inserted values they reference, and
+        ///        returns an iterator to @p return_index.
+        ///
+        /// Only defined in the compiled library: it needs the complete `array` type, which this
+        /// header cannot include without a cycle. Each concrete layout exposes it to the library
+        /// boundary as its own `rebuild_in_place`, a plain exported member -- a member of this
+        /// class template cannot be exported (Clang ignores the visibility attribute on explicit
+        /// instantiations of template members).
+        iterator rebuild_values(
+            std::vector<detail::union_rebuild_value> values,
+            std::vector<array_traits::value_type> inserted,
+            size_type return_index
+        );
+
         /**
          * @brief Gets mutable reference to the Arrow proxy.
          *
@@ -483,6 +720,7 @@ namespace sparrow
         arrow_proxy m_proxy;                                       ///< Internal Arrow proxy
         const std::uint8_t* p_type_ids;                            ///< Pointer to type ID buffer
         children_type m_children;                                  ///< Child array wrappers
+        std::vector<std::uint8_t> m_child_type_ids;                ///< Type IDs in child order
         std::array<std::uint8_t, TYPE_ID_MAP_SIZE> m_type_id_map;  ///< Type ID to child index mapping
 
         friend class detail::array_access;
@@ -678,12 +916,12 @@ namespace sparrow
             type_id_buffer_type element_type_buffer{std::move(element_type)};
             offset_buffer_type offsets_buffer{std::move(offsets)};
             return dense_union_array::create_proxy(
-                std::forward<std::vector<array>>(children),
+                std::move(children),
                 std::move(element_type_buffer),
                 std::move(offsets_buffer),
                 std::move(type_mapping),
-                std::forward<std::optional<std::string_view>>(name),
-                std::forward<std::optional<METADATA_RANGE>>(metadata)
+                std::move(name),
+                std::move(metadata)
             );
         }
 
@@ -747,12 +985,12 @@ namespace sparrow
             type_id_buffer_type element_type_buffer{std::move(element_type)};
             offset_buffer_type offsets_buffer{std::move(offsets)};
             return dense_union_array::create_proxy_impl(
-                std::forward<std::vector<array>>(children),
+                std::move(children),
                 std::move(element_type_buffer),
                 std::move(offsets_buffer),
-                std::forward<std::string>(format),
-                std::forward<std::optional<std::string_view>>(name),
-                std::forward<std::optional<METADATA_RANGE>>(metadata)
+                std::move(format),
+                std::move(name),
+                std::move(metadata)
             );
         }
 
@@ -767,6 +1005,12 @@ namespace sparrow
          * @post Used internally for element access in dense layout
          */
         SPARROW_API std::size_t element_offset(std::size_t i) const;
+
+        SPARROW_API iterator rebuild_in_place(
+            std::vector<detail::union_rebuild_value> values,
+            std::vector<array_traits::value_type> inserted,
+            size_type return_index
+        );
 
         const std::int32_t* p_offsets;  ///< Pointer to offset buffer
         friend class union_array_crtp_base<dense_union_array>;
@@ -913,6 +1157,13 @@ namespace sparrow
          * @post Used internally for element access in sparse layout
          */
         [[nodiscard]] SPARROW_API std::size_t element_offset(std::size_t i) const;
+
+        SPARROW_API iterator rebuild_in_place(
+            std::vector<detail::union_rebuild_value> values,
+            std::vector<array_traits::value_type> inserted,
+            size_type return_index
+        );
+
         friend class union_array_crtp_base<sparse_union_array>;
     };
 
@@ -921,28 +1172,47 @@ namespace sparrow
      ****************************************/
 
     template <class DERIVED>
-    constexpr auto union_array_crtp_base<DERIVED>::parse_type_id_map(std::string_view format_string)
-        -> type_id_map
+    auto union_array_crtp_base<DERIVED>::child_type_ids_from_format(std::string_view format_string)
+        -> std::vector<std::uint8_t>
     {
-        type_id_map ret;
-        // remove +du: / +su: prefix
+        SPARROW_ASSERT_TRUE(format_string.starts_with("+ud:") || format_string.starts_with("+us:"));
         format_string.remove_prefix(4);
 
-        constexpr std::string_view delim{","};
-        std::size_t child_index = 0;
-        std::ranges::for_each(
-            format_string | std::views::split(delim),
-            [&](const auto& s)
+        std::vector<std::uint8_t> result;
+        while (!format_string.empty())
+        {
+            const auto separator = format_string.find(',');
+            const auto token = format_string.substr(0, separator);
+            std::uint32_t type_id = 0;
+            const auto [end, error] = std::from_chars(token.data(), token.data() + token.size(), type_id);
+            SPARROW_ASSERT_TRUE(error == std::errc{} && end == token.data() + token.size());
+            SPARROW_ASSERT_TRUE(type_id <= std::numeric_limits<std::uint8_t>::max());
+            result.push_back(static_cast<std::uint8_t>(type_id));
+            if (separator == std::string_view::npos)
             {
-                const std::string str(
-                    std::string_view{&*std::ranges::begin(s), static_cast<size_t>(std::ranges::distance(s))}
-                );
-                const auto as_int = std::atoi(str.c_str());
-                ret[static_cast<std::size_t>(as_int)] = static_cast<std::uint8_t>(child_index);
-                ++child_index;
+                break;
             }
-        );
-        return ret;
+            format_string.remove_prefix(separator + 1);
+        }
+        return result;
+    }
+
+    template <class DERIVED>
+    constexpr auto
+    union_array_crtp_base<DERIVED>::make_type_id_map(std::span<const std::uint8_t> child_type_ids)
+        -> type_id_map
+    {
+        type_id_map result{};
+        std::array<bool, TYPE_ID_MAP_SIZE> seen{};
+        for (std::size_t child_index = 0; child_index < child_type_ids.size(); ++child_index)
+        {
+            const auto type_id = child_type_ids[child_index];
+            SPARROW_ASSERT_TRUE(child_index < TYPE_ID_MAP_SIZE);
+            SPARROW_ASSERT_TRUE(!seen[type_id]);
+            seen[type_id] = true;
+            result[type_id] = static_cast<std::uint8_t>(child_index);
+        }
+        return result;
     }
 
     template <class DERIVED>
@@ -951,7 +1221,7 @@ namespace sparrow
     union_array_crtp_base<DERIVED>::type_id_map_from_child_to_type_id(const std::optional<R>& child_index_to_type_id)
         -> type_id_map
     {
-        std::array<std::uint8_t, TYPE_ID_MAP_SIZE> ret;
+        type_id_map ret{};
         if (!child_index_to_type_id.has_value())
         {
             constexpr std::array<std::uint8_t, TYPE_ID_MAP_SIZE> default_mapping = []
@@ -964,10 +1234,13 @@ namespace sparrow
         }
         else
         {
-            const std::size_t n = std::ranges::size(*child_index_to_type_id);
-            for (std::size_t i = 0; i < n; ++i)
+            std::size_t child_index = 0;
+            for (const auto type_id : *child_index_to_type_id)
             {
-                ret[(*child_index_to_type_id)[static_cast<std::uint8_t>(i)]] = static_cast<std::uint8_t>(i);
+                SPARROW_ASSERT_TRUE(child_index < TYPE_ID_MAP_SIZE);
+                const auto id = static_cast<std::size_t>(type_id);
+                SPARROW_ASSERT_TRUE(id < TYPE_ID_MAP_SIZE);
+                ret[id] = static_cast<std::uint8_t>(child_index++);
             }
         }
         return ret;
@@ -980,30 +1253,38 @@ namespace sparrow
     union_array_crtp_base<DERIVED>::make_format_string(bool dense, const std::size_t n, const std::optional<R>& range)
     {
         const auto range_size = range.has_value() ? std::ranges::size(*range) : 0;
-        if (range_size == n || range_size == 0)
-        {
-            std::string ret = dense ? "+ud:" : "+us:";
-            if (range_size == 0)
-            {
-                for (std::size_t i = 0; i < n; ++i)
-                {
-                    ret += std::to_string(i) + ",";
-                }
-            }
-            else
-            {
-                for (const auto& v : *range)
-                {
-                    ret += std::to_string(v) + ",";
-                }
-            }
-            ret.pop_back();
-            return ret;
-        }
-        else
+        if (range_size != n && range_size != 0)
         {
             throw std::invalid_argument("Invalid type-id map");
         }
+
+        std::string result = dense ? "+ud:" : "+us:";
+        bool first = true;
+        const auto append_type_id = [&result, &first](const auto type_id)
+        {
+            if (!first)
+            {
+                result.push_back(',');
+            }
+            result += std::to_string(type_id);
+            first = false;
+        };
+
+        if (range_size == 0)
+        {
+            for (const auto type_id : std::views::iota(std::size_t{0}, n))
+            {
+                append_type_id(type_id);
+            }
+        }
+        else
+        {
+            for (const auto type_id : *range)
+            {
+                append_type_id(type_id);
+            }
+        }
+        return result;
     }
 
     template <class DERIVED>
@@ -1035,7 +1316,8 @@ namespace sparrow
         : m_proxy(std::move(proxy))
         , p_type_ids(reinterpret_cast<std::uint8_t*>(m_proxy.buffers()[0 /*index of type-ids*/].data()))
         , m_children(make_children(m_proxy))
-        , m_type_id_map(parse_type_id_map(m_proxy.format()))
+        , m_child_type_ids(child_type_ids_from_format(m_proxy.format()))
+        , m_type_id_map(make_type_id_map(m_child_type_ids))
     {
     }
 
@@ -1053,7 +1335,8 @@ namespace sparrow
             m_proxy = rhs.m_proxy;
             p_type_ids = reinterpret_cast<std::uint8_t*>(m_proxy.buffers()[0 /*index of type-ids*/].data());
             m_children = make_children(m_proxy);
-            m_type_id_map = parse_type_id_map(m_proxy.format());
+            m_child_type_ids = rhs.m_child_type_ids;
+            m_type_id_map = rhs.m_type_id_map;
         }
         return *this;
     }
@@ -1061,7 +1344,7 @@ namespace sparrow
     template <class DERIVED>
     SPARROW_CONSTEXPR_CLANG auto union_array_crtp_base<DERIVED>::operator[](std::size_t i) const -> value_type
     {
-        const auto type_id = static_cast<std::size_t>(p_type_ids[i]);
+        const auto type_id = static_cast<std::size_t>(p_type_ids[i + m_proxy.offset()]);
         const auto child_index = m_type_id_map[type_id];
         const auto offset = this->derived_cast().element_offset(i);
         return array_element(*m_children[child_index], static_cast<std::size_t>(offset));
@@ -1174,6 +1457,96 @@ namespace sparrow
         return std::ranges::equal(lhs, rhs);
     }
 
+    template <class DERIVED>
+    auto union_array_crtp_base<DERIVED>::insert(const_iterator pos, const_reference value, size_type count)
+        -> iterator
+    {
+        // A no-op insertion must not require offset zero (see insert_materialized).
+        if (count == 0)
+        {
+            return iterator_at(static_cast<size_type>(pos - cbegin()));
+        }
+        return insert_materialized(pos, std::views::single(array_materialize_element(value)), count);
+    }
+
+    template <class DERIVED>
+    auto union_array_crtp_base<DERIVED>::insert(
+        const_iterator pos,
+        const array_traits::value_type& value,
+        size_type count
+    ) -> iterator
+    {
+        return insert_materialized(pos, std::views::single(value), count);
+    }
+
+    template <class DERIVED>
+    void union_array_crtp_base<DERIVED>::push_back(const_reference value)
+    {
+        insert(cend(), value);
+    }
+
+    template <class DERIVED>
+    void union_array_crtp_base<DERIVED>::push_back(const array_traits::value_type& value)
+    {
+        insert(cend(), value);
+    }
+
+    template <class DERIVED>
+    void union_array_crtp_base<DERIVED>::resize(size_type new_length)
+    {
+        resize_impl(new_length, array_traits::value_type{});
+    }
+
+    template <class DERIVED>
+    void union_array_crtp_base<DERIVED>::resize(size_type new_length, const_reference value)
+    {
+        resize_impl(new_length, value);
+    }
+
+    template <class DERIVED>
+    void union_array_crtp_base<DERIVED>::resize(size_type new_length, const array_traits::value_type& value)
+    {
+        resize_impl(new_length, value);
+    }
+
+    template <class DERIVED>
+    auto union_array_crtp_base<DERIVED>::erase(const_iterator pos) -> iterator
+    {
+        const auto index = static_cast<size_type>(pos - cbegin());
+        SPARROW_ASSERT_TRUE(index < size());
+        return erase_values(index, 1);
+    }
+
+    template <class DERIVED>
+    auto union_array_crtp_base<DERIVED>::erase(const_iterator first, const_iterator last) -> iterator
+    {
+        const auto first_index = static_cast<size_type>(first - cbegin());
+        const auto last_index = static_cast<size_type>(last - cbegin());
+        SPARROW_ASSERT_TRUE(first_index <= last_index);
+        SPARROW_ASSERT_TRUE(last_index <= size());
+        return erase_values(first_index, last_index - first_index);
+    }
+
+    template <class DERIVED>
+    auto union_array_crtp_base<DERIVED>::erase_values(size_type first, size_type count) -> iterator
+    {
+        using rebuild_value = detail::union_rebuild_value;
+        SPARROW_ASSERT_TRUE(m_proxy.offset() == 0);
+        const auto current_size = size();
+        SPARROW_ASSERT_TRUE(first <= current_size);
+        SPARROW_ASSERT_TRUE(count <= current_size - first);
+        if (count == 0)
+        {
+            return iterator_at(first);
+        }
+
+        std::vector<rebuild_value> values;
+        values.reserve(current_size - count);
+        this->append_rebuild_entries(values, 0, first);
+        this->append_rebuild_entries(values, first + count, current_size);
+        return this->derived_cast().rebuild_in_place(std::move(values), {}, first);
+    }
+
     /************************************
      * Union array shared implementation *
      ************************************/
@@ -1191,8 +1564,8 @@ namespace sparrow
         )
         {
             const auto n_children = children.size();
-            ArrowSchema** child_schemas = new ArrowSchema*[n_children];
-            ArrowArray** child_arrays = new ArrowArray*[n_children];
+            ArrowSchema** child_schemas = n_children == 0 ? nullptr : new ArrowSchema*[n_children];
+            ArrowArray** child_arrays = n_children == 0 ? nullptr : new ArrowArray*[n_children];
 
             for (std::size_t i = 0; i < n_children; ++i)
             {
@@ -1202,14 +1575,17 @@ namespace sparrow
                 child_schemas[i] = new ArrowSchema(std::move(flat_schema));
             }
 
-            const bool is_nullable = std::all_of(
-                child_schemas,
-                child_schemas + n_children,
-                [](const ArrowSchema* schema)
-                {
-                    return to_set_of_ArrowFlags(schema->flags).contains(ArrowFlag::NULLABLE);
-                }
-            );
+            const bool is_nullable = n_children == 0
+                                     || std::all_of(
+                                         child_schemas,
+                                         child_schemas + n_children,
+                                         [](const ArrowSchema* schema)
+                                         {
+                                             return to_set_of_ArrowFlags(schema->flags).contains(
+                                                 ArrowFlag::NULLABLE
+                                             );
+                                         }
+                                     );
 
             const std::optional<std::unordered_set<sparrow::ArrowFlag>>
                 flags = is_nullable
