@@ -16,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         compiler: [clang, gcc]
-        version: [11, 12, 13, 14, 17, 18, 19, 20, 21]
+        version: [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
         os: [namespace-profile-sparrow-compilation-linux, namespace-profile-sparrow-compilation-linux-arm]
         arch: [64]
         config: [Debug, RelWithDebInfo]
@@ -32,6 +32,10 @@ jobs:
             version: 13
           - compiler: clang
             version: 14
+          - compiler: clang
+            version: 15
+          - compiler: clang
+            version: 16
           - compiler: gcc
             version: 17
           - compiler: gcc
