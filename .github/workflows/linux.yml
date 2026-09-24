@@ -16,14 +16,15 @@ jobs:
       fail-fast: false
       matrix:
         compiler: [clang, gcc]
-        version: [11, 12, 13, 14, 17, 18, 19, 20, 21]
-        os: [namespace-profile-sparrow-compilation-linux, namespace-profile-sparrow-compilation-linux-arm]
+        version: [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
+        os: [namespace-profile-sparrow-compilation-linux, namespace-profile-sparrow-compilation-linux-arm, namespace-profile-sparrow-compilation-linux-next]
         arch: [64]
         config: [Debug, RelWithDebInfo]
         date-polyfill: [ON, OFF]
         shared: [ON, OFF]
         cpp_standard: [20]
         exclude:
+          # no clang before 17
           - compiler: clang
             version: 11
           - compiler: clang
@@ -32,6 +33,11 @@ jobs:
             version: 13
           - compiler: clang
             version: 14
+          - compiler: clang
+            version: 15
+          - compiler: clang
+            version: 16
+          # no gcc after 16
           - compiler: gcc
             version: 17
           - compiler: gcc
@@ -42,6 +48,59 @@ jobs:
             version: 20
           - compiler: gcc
             version: 21
+          - compiler: gcc
+            version: 22
+          # gcc-15/16 and clang-22 only exist on the -next image
+          - compiler: gcc
+            version: 15
+            os: namespace-profile-sparrow-compilation-linux
+          - compiler: gcc
+            version: 15
+            os: namespace-profile-sparrow-compilation-linux-arm
+          - compiler: gcc
+            version: 16
+            os: namespace-profile-sparrow-compilation-linux
+          - compiler: gcc
+            version: 16
+            os: namespace-profile-sparrow-compilation-linux-arm
+          - compiler: clang
+            version: 22
+            os: namespace-profile-sparrow-compilation-linux
+          - compiler: clang
+            version: 22
+            os: namespace-profile-sparrow-compilation-linux-arm
+          - compiler: clang
+            version: 21
+            os: namespace-profile-sparrow-compilation-linux
+          - compiler: clang
+            version: 21
+            os: namespace-profile-sparrow-compilation-linux-arm
+          # the -next image only builds what it ships: gcc-15/16, clang-21/22
+          - compiler: clang
+            version: 17
+            os: namespace-profile-sparrow-compilation-linux-next
+          - compiler: clang
+            version: 18
+            os: namespace-profile-sparrow-compilation-linux-next
+          - compiler: clang
+            version: 19
+            os: namespace-profile-sparrow-compilation-linux-next
+          - compiler: clang
+            version: 20
+            os: namespace-profile-sparrow-compilation-linux-next
+          - compiler: gcc
+            version: 11
+            os: namespace-profile-sparrow-compilation-linux-next
+          - compiler: gcc
+            version: 12
+            os: namespace-profile-sparrow-compilation-linux-next
+          - compiler: gcc
+            version: 13
+            os: namespace-profile-sparrow-compilation-linux-next
+          - compiler: gcc
+            version: 14
+            os: namespace-profile-sparrow-compilation-linux-next
+          # old gcc has no std tzdb
           - compiler: gcc
             version: 11
             date-polyfill: OFF
@@ -73,11 +132,9 @@ jobs:
             date-polyfill: OFF
             shared: OFF
             cpp_standard: 23
-          # libc++ builds — catch issues like the is_signed_v specialization
-          # restriction introduced in libc++ 19+ (_LIBCPP_NO_SPECIALIZATIONS)
           - compiler: clang
             version: 21
-            os: namespace-profile-sparrow-compilation-linux
+            os: namespace-profile-sparrow-compilation-linux-next
             arch: 64
             config: Debug
             date-polyfill: ON
@@ -86,68 +143,57 @@ jobs:
             stdlib: libc++
           - compiler: clang
             version: 21
-            os: namespace-profile-sparrow-compilation-linux
+            os: namespace-profile-sparrow-compilation-linux-next
             arch: 64
             config: Release
             date-polyfill: OFF
             shared: OFF
             cpp_standard: 23
             stdlib: libc++
-           
+          # -next toolchains (preinstalled on the -next image)
+          - compiler: gcc
+            version: 15
+            os: namespace-profile-sparrow-compilation-linux-next
+            arch: 64
+            config: Release
+            date-polyfill: OFF
+            shared: OFF
+            cpp_standard: 23
+          - compiler: gcc
+            version: 16
+            os: namespace-profile-sparrow-compilation-linux-next
+            arch: 64
+            config: Release
+            date-polyfill: OFF
+            shared: OFF
+            cpp_standard: 23
+          - compiler: clang
+            version: 22
+            os: namespace-profile-sparrow-compilation-linux-next
+            arch: 64
+            config: Release
+            date-polyfill: OFF
+            shared: OFF
+            cpp_standard: 23
+
     runs-on: ${{ matrix.os }}
     name: ${{matrix.os}} / ${{ matrix.compiler }} / ${{ matrix.version }} / ${{ matrix.arch }} / ${{ matrix.config }} / date-polyfill ${{ matrix.date-polyfill}} / shared ${{ matrix.shared }} / cpp${{ matrix.cpp_standard }}${{ matrix.stdlib && format(' / {0}', matrix.stdlib) || '' }}
     env:
       SCCACHE_GHA_ENABLED: "true"
- 
+
     steps:
 
     - name: Run sccache-cache
-      uses: mozilla-actions/sccache-action@v0.0.9
-
-    - name: Install pthread
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libpthread-stubs0-dev libboost-thread-dev
-
-    - uses: rui314/setup-mold@v1
-      with:
-        mold-version: 2.40.1
-        make-default: true
-
-    - name: Install GCC
-      if: matrix.compiler == 'gcc'
-      id: install_cc
-      uses: rlalik/setup-cpp-compiler@v2
-      with:
-        compiler: gcc-${{matrix.version}}
-
-    - name: Install LLVM and Clang
-      if: matrix.compiler == 'clang'
-      run: |
-        wget https://apt.llvm.org/llvm.sh
-        chmod +x llvm.sh
-        sudo ./llvm.sh ${{matrix.version}}
-        sudo apt-get install -y clang-tools-${{matrix.version}}
-        if [[ "${{matrix.stdlib}}" == "libc++" ]]; then
-          sudo apt-get install -y libc++-${{matrix.version}}-dev libc++abi-${{matrix.version}}-dev
-        fi
-        sudo update-alternatives --install /usr/bin/clang++				    clang++					    /usr/bin/clang++-${{matrix.version}} 200
-        sudo update-alternatives --install /usr/bin/clang					    clang					      /usr/bin/clang-${{matrix.version}} 200
-        sudo update-alternatives --install /usr/bin/clang-scan-deps   clang-scan-deps     /usr/bin/clang-scan-deps-${{matrix.version}} 200 
-        sudo update-alternatives --set clang /usr/bin/clang-${{matrix.version}}
-        sudo update-alternatives --set clang++ /usr/bin/clang++-${{matrix.version}}
-        sudo update-alternatives --set clang-scan-deps /usr/bin/clang-scan-deps-${{matrix.version}}
+      uses: mozilla-actions/sccache-action@v0.0.11
 
     - name: Install 32bit support
       if: matrix.arch == '32'
-      run: sudo apt-get install gcc-multilib g++-multilib
-
-    - name: Install specific version of tzdata
-      if: matrix.date-polyfill == 'OFF'
-      run: sudo apt-get install tzdata=2024a-2ubuntu1 -y --allow-downgrades
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-${{matrix.version}}-multilib g++-${{matrix.version}}-multilib
 
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     - name: Set conda environment
       uses: mamba-org/setup-micromamba@v3
@@ -160,12 +206,11 @@ jobs:
     - name: Configure using CMake
       run: |
         if [[ "${{matrix.arch}}" = 32 ]]; then export CXXFLAGS=-m32 ; export CFLAGS=-m32; fi
-        if [[ "${{matrix.compiler}}" = "gcc" ]]; then export CC=gcc-${{matrix.version}}; export CXX=g++-${{matrix.version}}; else export CC=clang; export CXX=clang++; fi
+        if [[ "${{matrix.compiler}}" = "gcc" ]]; then export CC=gcc-${{matrix.version}}; export CXX=g++-${{matrix.version}}; else export CC=clang-${{matrix.version}}; export CXX=clang++-${{matrix.version}}; fi
         EXTRA_CXX_FLAGS=""
-        EXTRA_LINKER_FLAGS="-fuse-ld=mold"
         if [[ "${{matrix.stdlib}}" == "libc++" ]]; then
           EXTRA_CXX_FLAGS="-stdlib=libc++"
-          EXTRA_LINKER_FLAGS="-fuse-ld=mold -stdlib=libc++"
+          EXTRA_LINKER_FLAGS="-stdlib=libc++"
         fi
         cmake -G Ninja \
           -Bbuild \
@@ -184,8 +229,6 @@ jobs:
           -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
           -DFETCH_DEPENDENCIES_WITH_CMAKE=MISSING \
           -DSPARROW_BUILD_SHARED=${{matrix.shared}} \
-          -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=mold" \
-          -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=mold" \
           -DTRACK_COPIES=ON
 
     - name: Build library
@@ -227,7 +270,7 @@ jobs:
     - name: Run all examples
       working-directory: build
       run: cmake --build . --config ${{matrix.config}} --target run_examples
-  
+
     - name: Install
       working-directory: build
       run: cmake --install . --config ${{matrix.config}}
