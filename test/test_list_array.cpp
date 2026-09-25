@@ -674,6 +674,30 @@ namespace sparrow
                 }
             }
         }
+
+#if defined(__cpp_lib_format)
+        TEST_CASE("formatting")
+        {
+            const std::vector<std::size_t> sizes = {2, 2, 3, 4};
+            const std::size_t n_flat = 11;
+            auto iota = std::ranges::iota_view{std::size_t(0), n_flat};
+            primitive_array<std::int16_t> flat_arr(
+                iota
+                | std::views::transform(
+                    [](auto i)
+                    {
+                        return static_cast<std::int16_t>(i);
+                    }
+                )
+            );
+            const list_array list_arr(array(std::move(flat_arr)), list_array::offset_from_sizes(sizes), true);
+
+            CHECK_EQ(
+                std::format("{}", list_arr),
+                "List [name=nullptr | size=4] <<0, 1>, <2, 3>, <4, 5, 6>, <7, 8, 9, 10>>"
+            );
+        }
+#endif
     }
 
     namespace test
@@ -1097,6 +1121,20 @@ namespace sparrow
                 }
             }
         }
+
+#if defined(__cpp_lib_format)
+        TEST_CASE("formatting")
+        {
+            const std::vector<std::size_t> sizes = {1, 2, 3, 4};
+            list_view_array list_arr(test::make_list_view_proxy<std::int16_t>(10, sizes));
+
+            // flat data is [0..9] and sizes are {1, 2, 3, 4}
+            CHECK_EQ(
+                std::format("{}", list_arr),
+                "List view [name=test | size=4] <<0>, <1, 2>, <3, 4, 5>, <6, 7, 8, 9>>"
+            );
+        }
+#endif
     }
 
     namespace test
@@ -1433,5 +1471,19 @@ namespace sparrow
                 }
             }
         }
+
+#if defined(__cpp_lib_format)
+        TEST_CASE("formatting")
+        {
+            constexpr std::size_t list_size = 5;
+            fixed_sized_list_array list_arr(test::make_fixed_sized_list_proxy<std::int16_t>(20, list_size));
+
+            // flat data is [0..19], 5 elements per list
+            CHECK_EQ(
+                std::format("{}", list_arr),
+                "Fixed sized list [name=test | size=4] <<0, 1, 2, 3, 4>, <5, 6, 7, 8, 9>, <10, 11, 12, 13, 14>, <15, 16, 17, 18, 19>>"
+            );
+        }
+#endif
     }
 }
