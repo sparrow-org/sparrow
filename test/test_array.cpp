@@ -143,9 +143,7 @@ namespace sparrow
         {
             // Each alternative of the const reference maps onto exactly one alternative of the
             // value variant, its owning counterpart (see impl::materialized).
-            static_assert(impl::materialized_alternatives_v<
-                          array_traits::const_reference,
-                          array_traits::value_type>);
+            static_assert(impl::materializable_into<array_traits::const_reference, array_traits::value_type>);
 
             SUBCASE("nulls and primitive values")
             {

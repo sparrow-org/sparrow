@@ -1074,9 +1074,9 @@ namespace sparrow
             using value_variant = nullable_variant<nullable<int>, nullable<double>>;
 
             // Each alternative of the source maps onto exactly one alternative of the target.
-            static_assert(impl::materialized_alternatives_v<reference_variant, value_variant>);
+            static_assert(impl::materializable_into<reference_variant, value_variant>);
             // Alternatives without an owning counterpart make the conversion unavailable.
-            static_assert(!impl::materialized_alternatives_v<value_variant, nullable_variant<nullable<const int&>>>);
+            static_assert(not impl::materializable_into<value_variant, nullable_variant<nullable<const int&>>>);
             static_assert(!std::is_constructible_v<
                           nullable_variant<nullable<const double&>>,
                           value_variant>);
@@ -1096,6 +1096,17 @@ namespace sparrow
             assigned = reference_variant{nullable<const double&>(double_value)};
             REQUIRE(std::holds_alternative<nullable<double>>(assigned));
             CHECK_EQ(std::get<nullable<double>>(assigned).get(), 1.5);
+
+            // The flag is materialized with the same rule as the value: a flag reference
+            // becomes an owned bool.
+            using flag_reference_variant = nullable_variant<nullable<const int&, const bool&>>;
+            using flag_variant = nullable_variant<nullable<int>>;
+            static_assert(impl::materializable_into<flag_reference_variant, flag_variant>);
+            const bool valid = true;
+            const flag_reference_variant flag_reference{nullable<const int&, const bool&>(int_value, valid)};
+            const flag_variant flag_converted = flag_reference;
+            CHECK_EQ(std::get<nullable<int>>(flag_converted).get(), 42);
+            CHECK(std::get<nullable<int>>(flag_converted).has_value());
         }
     }
 }

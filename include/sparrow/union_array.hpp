@@ -402,14 +402,7 @@ namespace sparrow
          * @return Iterator to the first inserted value.
          */
         template <std::input_iterator InputIt>
-        iterator insert(const_iterator pos, InputIt first, InputIt last, size_type count = 1)
-        {
-            if (count == 0)
-            {
-                return iterator_at(static_cast<size_type>(pos - cbegin()));
-            }
-            return insert_materialized(pos, std::vector<array_traits::value_type>(first, last), count);
-        }
+        iterator insert(const_iterator pos, InputIt first, InputIt last, size_type count = 1);
 
         /**
          * @brief Erases the value at `pos`.
@@ -617,41 +610,7 @@ namespace sparrow
             const_iterator pos,
             std::vector<array_traits::value_type> inserted,
             size_type count
-        )
-        {
-            const auto pos_index = static_cast<size_type>(pos - cbegin());
-            if (inserted.empty())
-            {
-                return iterator_at(pos_index);
-            }
-
-            SPARROW_ASSERT_TRUE(count > 0);
-            SPARROW_ASSERT_TRUE(m_proxy.offset() == 0);
-            SPARROW_ASSERT_TRUE(pos_index <= size());
-
-            const auto old_size = size();
-            const auto value_count = static_cast<size_type>(inserted.size());
-            std::vector<detail::union_rebuild_value> entries;
-            entries.reserve(old_size + value_count * count);
-
-            append_rebuild_entries(entries, 0, pos_index);
-            for (size_type repetition = 0; repetition < count; ++repetition)
-            {
-                for (size_type value_index = 0; value_index < value_count; ++value_index)
-                {
-                    entries.push_back(detail::union_rebuild_value{
-                        .row = value_index,
-                        .inserted = true
-                    });
-                }
-            }
-            append_rebuild_entries(entries, pos_index, old_size);
-            return this->derived_cast().rebuild_in_place(
-                std::move(entries),
-                std::move(inserted),
-                pos_index
-            );
-        }
+        );
 
         iterator erase_values(size_type first, size_type count);
 
@@ -1549,7 +1508,8 @@ namespace sparrow
     }
 
     template <class DERIVED>
-    auto union_array_crtp_base<DERIVED>::insert(const_iterator pos, const_reference value, size_type count)
+    template <std::input_iterator InputIt>
+    auto union_array_crtp_base<DERIVED>::insert(const_iterator pos, InputIt first, InputIt last, size_type count)
         -> iterator
     {
         // A no-op insertion must not require offset zero (see insert_materialized).
@@ -1557,22 +1517,7 @@ namespace sparrow
         {
             return iterator_at(static_cast<size_type>(pos - cbegin()));
         }
-        return insert(pos, array_traits::value_type(value), count);
-    }
-
-    template <class DERIVED>
-    auto union_array_crtp_base<DERIVED>::insert(
-        const_iterator pos,
-        const array_traits::value_type& value,
-        size_type count
-    ) -> iterator
-    {
-        // A no-op insertion must not require offset zero (see insert_materialized).
-        if (count == 0)
-        {
-            return iterator_at(static_cast<size_type>(pos - cbegin()));
-        }
-        return insert_materialized(pos, std::vector<array_traits::value_type>{value}, count);
+        return insert_materialized(pos, std::vector<array_traits::value_type>(first, last), count);
     }
 
     template <class DERIVED>
@@ -1621,6 +1566,29 @@ namespace sparrow
         SPARROW_ASSERT_TRUE(first_index <= last_index);
         SPARROW_ASSERT_TRUE(last_index <= size());
         return erase_values(first_index, last_index - first_index);
+    }
+
+    template <class DERIVED>
+    auto union_array_crtp_base<DERIVED>::make_child_schemas(
+        std::vector<std::uint8_t>& child_type_ids,
+        std::array<bool, TYPE_ID_MAP_SIZE>& used_type_ids
+    ) const -> std::vector<union_child_schema>
+    {
+        const auto child_count = m_children.size();
+        child_type_ids = m_child_type_ids;
+        SPARROW_ASSERT_TRUE(child_type_ids.size() == child_count);
+
+        std::vector<union_child_schema> child_schemas;
+        child_schemas.reserve(child_count);
+        for (std::size_t child_index = 0; child_index < child_count; ++child_index)
+        {
+            used_type_ids[child_type_ids[child_index]] = true;
+            child_schemas.emplace_back(
+                m_children[child_index]->data_type(),
+                std::string(m_children[child_index]->get_arrow_proxy().format())
+            );
+        }
+        return child_schemas;
     }
 
     template <class DERIVED>

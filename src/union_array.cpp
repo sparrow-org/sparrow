@@ -383,29 +383,6 @@ namespace sparrow
     }
 
     template <class DERIVED>
-    auto union_array_crtp_base<DERIVED>::make_child_schemas(
-        std::vector<std::uint8_t>& child_type_ids,
-        std::array<bool, TYPE_ID_MAP_SIZE>& used_type_ids
-    ) const -> std::vector<union_child_schema>
-    {
-        const auto child_count = m_children.size();
-        child_type_ids = m_child_type_ids;
-        SPARROW_ASSERT_TRUE(child_type_ids.size() == child_count);
-
-        std::vector<union_child_schema> child_schemas;
-        child_schemas.reserve(child_count);
-        for (std::size_t child_index = 0; child_index < child_count; ++child_index)
-        {
-            used_type_ids[child_type_ids[child_index]] = true;
-            child_schemas.emplace_back(
-                m_children[child_index]->data_type(),
-                std::string(m_children[child_index]->get_arrow_proxy().format())
-            );
-        }
-        return child_schemas;
-    }
-
-    template <class DERIVED>
     auto union_array_crtp_base<DERIVED>::resolve_inserted_children(
         std::span<const array_traits::value_type> inserted,
         std::vector<union_child_schema>& child_schemas,
@@ -637,4 +614,168 @@ namespace sparrow
         auto replacement = create_rebuild_proxy(std::move(new_children), std::move(payload), child_type_ids);
         return adopt_rebuilt_array(std::move(replacement), std::move(child_type_ids), return_index);
     }
+
+    template <class DERIVED>
+    auto union_array_crtp_base<DERIVED>::insert(const_iterator pos, const_reference value, size_type count)
+        -> iterator
+    {
+        // A no-op insertion must not require offset zero (see insert_materialized).
+        if (count == 0)
+        {
+            return iterator_at(static_cast<size_type>(pos - cbegin()));
+        }
+        return insert(pos, array_traits::value_type(value), count);
+    }
+
+    template <class DERIVED>
+    auto union_array_crtp_base<DERIVED>::insert(
+        const_iterator pos,
+        const array_traits::value_type& value,
+        size_type count
+    ) -> iterator
+    {
+        // A no-op insertion must not require offset zero (see insert_materialized).
+        if (count == 0)
+        {
+            return iterator_at(static_cast<size_type>(pos - cbegin()));
+        }
+        return insert_materialized(pos, std::vector<array_traits::value_type>{value}, count);
+    }
+
+    template <class DERIVED>
+    auto union_array_crtp_base<DERIVED>::insert_materialized(
+        const_iterator pos,
+        std::vector<array_traits::value_type> inserted,
+        size_type count
+    ) -> iterator
+    {
+        const auto pos_index = static_cast<size_type>(pos - cbegin());
+        if (inserted.empty())
+        {
+            return iterator_at(pos_index);
+        }
+
+        SPARROW_ASSERT_TRUE(count > 0);
+        SPARROW_ASSERT_TRUE(m_proxy.offset() == 0);
+        SPARROW_ASSERT_TRUE(pos_index <= size());
+
+        const auto old_size = size();
+        const auto value_count = static_cast<size_type>(inserted.size());
+        std::vector<detail::union_rebuild_value> entries;
+        entries.reserve(old_size + value_count * count);
+
+        append_rebuild_entries(entries, 0, pos_index);
+        for (size_type repetition = 0; repetition < count; ++repetition)
+        {
+            for (size_type value_index = 0; value_index < value_count; ++value_index)
+            {
+                entries.push_back(detail::union_rebuild_value{
+                    .row = value_index,
+                    .inserted = true
+                });
+            }
+        }
+        append_rebuild_entries(entries, pos_index, old_size);
+        return this->derived_cast().rebuild_in_place(std::move(entries), std::move(inserted), pos_index);
+    }
+
+    template SPARROW_API auto union_array_crtp_base<dense_union_array>::insert(
+        const_iterator pos,
+        const_reference value,
+        size_type count
+    ) -> iterator;
+    template SPARROW_API auto union_array_crtp_base<dense_union_array>::insert(
+        const_iterator pos,
+        const array_traits::value_type& value,
+        size_type count
+    ) -> iterator;
+    template SPARROW_API auto union_array_crtp_base<dense_union_array>::insert_materialized(
+        const_iterator pos,
+        std::vector<array_traits::value_type> inserted,
+        size_type count
+    ) -> iterator;
+    template SPARROW_API auto union_array_crtp_base<sparse_union_array>::insert(
+        const_iterator pos,
+        const_reference value,
+        size_type count
+    ) -> iterator;
+    template SPARROW_API auto union_array_crtp_base<sparse_union_array>::insert(
+        const_iterator pos,
+        const array_traits::value_type& value,
+        size_type count
+    ) -> iterator;
+    template SPARROW_API auto union_array_crtp_base<sparse_union_array>::insert_materialized(
+        const_iterator pos,
+        std::vector<array_traits::value_type> inserted,
+        size_type count
+    ) -> iterator;
+
+    template SPARROW_API auto union_array_crtp_base<dense_union_array>::make_union_fillers(
+        size_type old_child_count,
+        const std::vector<union_child_schema>& child_schemas,
+        std::vector<std::size_t>& inserted_children,
+        std::vector<array_traits::value_type>& inserted
+    ) const -> std::vector<detail::union_rebuild_value>;
+    template SPARROW_API auto union_array_crtp_base<dense_union_array>::make_rebuild_payload(
+        std::span<const detail::union_rebuild_value> values,
+        std::span<const std::size_t> inserted_children,
+        std::span<const std::uint8_t> child_type_ids,
+        std::span<const detail::union_rebuild_value> fillers
+    ) const -> detail::union_rebuild_payload;
+    template SPARROW_API auto union_array_crtp_base<dense_union_array>::create_rebuild_proxy(
+        std::vector<array> children,
+        detail::union_rebuild_payload&& payload,
+        std::span<const std::uint8_t> child_type_ids
+    ) const -> arrow_proxy;
+    template SPARROW_API auto union_array_crtp_base<dense_union_array>::build_rebuilt_children(
+        const detail::union_rebuild_payload& payload,
+        std::span<const array_traits::value_type> inserted,
+        std::span<const std::size_t> inserted_children,
+        const union_array_crtp_base<dense_union_array>::children_type& old_children,
+        std::vector<array>& new_child_templates
+    ) const -> std::vector<array>;
+    template SPARROW_API auto union_array_crtp_base<dense_union_array>::adopt_rebuilt_array(
+        arrow_proxy replacement,
+        std::vector<std::uint8_t> child_type_ids,
+        size_type return_index
+    ) -> iterator;
+    template SPARROW_API auto union_array_crtp_base<dense_union_array>::rebuild_values(
+        std::vector<detail::union_rebuild_value> values,
+        std::vector<array_traits::value_type> inserted,
+        size_type return_index
+    ) -> iterator;
+    template SPARROW_API auto union_array_crtp_base<sparse_union_array>::make_union_fillers(
+        size_type old_child_count,
+        const std::vector<union_child_schema>& child_schemas,
+        std::vector<std::size_t>& inserted_children,
+        std::vector<array_traits::value_type>& inserted
+    ) const -> std::vector<detail::union_rebuild_value>;
+    template SPARROW_API auto union_array_crtp_base<sparse_union_array>::make_rebuild_payload(
+        std::span<const detail::union_rebuild_value> values,
+        std::span<const std::size_t> inserted_children,
+        std::span<const std::uint8_t> child_type_ids,
+        std::span<const detail::union_rebuild_value> fillers
+    ) const -> detail::union_rebuild_payload;
+    template SPARROW_API auto union_array_crtp_base<sparse_union_array>::create_rebuild_proxy(
+        std::vector<array> children,
+        detail::union_rebuild_payload&& payload,
+        std::span<const std::uint8_t> child_type_ids
+    ) const -> arrow_proxy;
+    template SPARROW_API auto union_array_crtp_base<sparse_union_array>::build_rebuilt_children(
+        const detail::union_rebuild_payload& payload,
+        std::span<const array_traits::value_type> inserted,
+        std::span<const std::size_t> inserted_children,
+        const union_array_crtp_base<sparse_union_array>::children_type& old_children,
+        std::vector<array>& new_child_templates
+    ) const -> std::vector<array>;
+    template SPARROW_API auto union_array_crtp_base<sparse_union_array>::adopt_rebuilt_array(
+        arrow_proxy replacement,
+        std::vector<std::uint8_t> child_type_ids,
+        size_type return_index
+    ) -> iterator;
+    template SPARROW_API auto union_array_crtp_base<sparse_union_array>::rebuild_values(
+        std::vector<detail::union_rebuild_value> values,
+        std::vector<array_traits::value_type> inserted,
+        size_type return_index
+    ) -> iterator;
 }
