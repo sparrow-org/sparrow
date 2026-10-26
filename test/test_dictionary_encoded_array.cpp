@@ -14,7 +14,9 @@
 
 #include <array>
 #include <cstdint>
+#include <string>
 #include <string_view>
+#include <utility>
 
 #include "sparrow/array.hpp"
 #include "sparrow/array_api.hpp"
@@ -58,6 +60,21 @@ namespace sparrow
     nullable<std::string_view> get_dict_value(layout_type_cref r)
     {
         return std::get<nullable<std::string_view>>(r);
+    }
+
+    inline layout_type make_mutable_dictionary()
+    {
+        layout_type::keys_buffer_type keys{0, 1, 2, 0};
+        std::vector<nullable<std::string>> values_words{"a", "b", "c"};
+        string_array values{values_words};
+        array values_array{std::move(values)};
+        return layout_type{std::move(keys), std::move(values_array), true};
+    }
+
+    template <class T>
+    std::size_t dictionary_values_size(const T& dict)
+    {
+        return static_cast<std::size_t>(detail::array_access::get_arrow_proxy(dict).dictionary()->length());
     }
 
     TEST_SUITE("dictionary_encoded_array")
@@ -155,17 +172,17 @@ namespace sparrow
             test_metadata(metadata_sample, *(arr.metadata()));
 
             // check bitmap
-            REQUIRE_EQ(arr[0].has_value(), true);
-            REQUIRE_EQ(arr[1].has_value(), true);
-            REQUIRE_EQ(arr[2].has_value(), false);
-            REQUIRE_EQ(arr[3].has_value(), true);
-            REQUIRE_EQ(arr[4].has_value(), true);
+            REQUIRE_EQ(std::as_const(arr)[0].has_value(), true);
+            REQUIRE_EQ(std::as_const(arr)[1].has_value(), true);
+            REQUIRE_EQ(std::as_const(arr)[2].has_value(), false);
+            REQUIRE_EQ(std::as_const(arr)[3].has_value(), true);
+            REQUIRE_EQ(std::as_const(arr)[4].has_value(), true);
 
             // check the values
-            CHECK_NULLABLE_VARIANT_EQ(arr[0], float32_t(3.0f));
-            CHECK_NULLABLE_VARIANT_EQ(arr[1], float32_t(3.0f));
-            CHECK_NULLABLE_VARIANT_EQ(arr[3], float32_t(1.0f));
-            CHECK_NULLABLE_VARIANT_EQ(arr[4], float32_t(0.0f));
+            CHECK_NULLABLE_VARIANT_EQ(std::as_const(arr)[0], float32_t(3.0f));
+            CHECK_NULLABLE_VARIANT_EQ(std::as_const(arr)[1], float32_t(3.0f));
+            CHECK_NULLABLE_VARIANT_EQ(std::as_const(arr)[3], float32_t(1.0f));
+            CHECK_NULLABLE_VARIANT_EQ(std::as_const(arr)[4], float32_t(0.0f));
         }
 
         TEST_CASE("copy")
@@ -326,7 +343,7 @@ namespace sparrow
             for (size_t i = 0; i < sliced_view.size(); ++i)
             {
                 // Just ensure we can access elements without crashing
-                [[maybe_unused]] auto element = sliced_view[i];
+                [[maybe_unused]] auto element = std::as_const(sliced_view)[i];
             }
         }
 
@@ -343,7 +360,7 @@ namespace sparrow
 
             for (size_t i = 0; i < dict.size(); ++i)
             {
-                [[maybe_unused]] auto element = dict[i];
+                [[maybe_unused]] auto element = std::as_const(dict)[i];
             }
         }
 
@@ -474,6 +491,381 @@ namespace sparrow
                     REQUIRE(no_null_dict[i].has_value());
                 }
             }
+        }
+
+
+        TEST_CASE("set_value")
+        {
+            SUBCASE("new value appends to the dictionary")
+            {
+                layout_type dict = make_mutable_dictionary();
+                dict.set_value(3, layout_type::value_type{make_nullable<std::string>("d")});
+                REQUIRE_EQ(dict.size(), 4);
+                CHECK_EQ(dictionary_values_size(dict), 4);
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[3], std::string_view("d"));
+            }
+
+            SUBCASE("existing value reuses the dictionary entry")
+            {
+                layout_type dict = make_mutable_dictionary();
+                dict.set_value(3, make_nullable<std::string>("c"));
+                REQUIRE_EQ(dict.size(), 4);
+                CHECK_EQ(dictionary_values_size(dict), 3);
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[2], std::string_view("c"));
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[3], std::string_view("c"));
+            }
+
+            SUBCASE("replacement compacts orphaned entries")
+            {
+                layout_type dict = make_mutable_dictionary();
+                dict.set_value(1, make_nullable<std::string>("a"));
+                REQUIRE_EQ(dict.size(), 4);
+                CHECK_EQ(dictionary_values_size(dict), 2);
+                const auto& cdict = dict;
+                CHECK_NULLABLE_VARIANT_EQ(cdict[0], std::string_view("a"));
+                CHECK_NULLABLE_VARIANT_EQ(cdict[1], std::string_view("a"));
+                CHECK_NULLABLE_VARIANT_EQ(cdict[2], std::string_view("c"));
+                CHECK_NULLABLE_VARIANT_EQ(cdict[3], std::string_view("a"));
+            }
+
+            SUBCASE("null replacement compacts orphaned entries")
+            {
+                layout_type dict = make_mutable_dictionary();
+                dict.set_value(1, sparrow::nullval);
+                REQUIRE_EQ(dict.size(), 4);
+                CHECK_FALSE(std::as_const(dict)[1].has_value());
+                CHECK_EQ(dictionary_values_size(dict), 2);
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[2], std::string_view("c"));
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[3], std::string_view("a"));
+            }
+
+            SUBCASE("null replacement does not append the value")
+            {
+                layout_type dict = make_mutable_dictionary();
+                dict.set_value(0, make_nullable<std::string>("x", false));
+                CHECK_FALSE(std::as_const(dict)[0].has_value());
+                CHECK_EQ(dictionary_values_size(dict), 3);
+            }
+
+            SUBCASE("null dictionary entries never match a lookup")
+            {
+                std::vector<nullable<std::string>> dictionary_values{
+                    make_nullable<std::string>("a"),
+                    nullable<std::string>{},
+                    make_nullable<std::string>("b")
+                };
+                string_array values{dictionary_values};
+                array values_array{std::move(values)};
+                layout_type dict{layout_type::keys_buffer_type{0, 1, 2}, std::move(values_array), true};
+                CHECK_FALSE(std::as_const(dict)[1].has_value());
+
+                dict.set_value(1, make_nullable<std::string>("b"));
+                CHECK_EQ(dictionary_values_size(dict), 2);
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[1], std::string_view("b"));
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[2], std::string_view("b"));
+            }
+        }
+
+        TEST_CASE("insert")
+        {
+            SUBCASE("push_back appends a new value once")
+            {
+                layout_type dict = make_mutable_dictionary();
+                dict.push_back(make_nullable<std::string>("d"));
+                CHECK_EQ(dict.size(), 5);
+                CHECK_EQ(dictionary_values_size(dict), 4);
+                dict.push_back(make_nullable<std::string>("d"));
+                CHECK_EQ(dict.size(), 6);
+                CHECK_EQ(dictionary_values_size(dict), 4);
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[5], std::string_view("d"));
+            }
+
+            SUBCASE("push_back reuses an existing value")
+            {
+                layout_type dict = make_mutable_dictionary();
+                dict.push_back(make_nullable<std::string>("c"));
+                CHECK_EQ(dict.size(), 5);
+                CHECK_EQ(dictionary_values_size(dict), 3);
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[4], std::string_view("c"));
+            }
+
+            SUBCASE("push_back null keeps the dictionary unchanged")
+            {
+                layout_type dict = make_mutable_dictionary();
+                dict.push_back(nullable<std::string>{});
+                CHECK_EQ(dict.size(), 5);
+                CHECK_FALSE(std::as_const(dict)[4].has_value());
+                CHECK_EQ(dictionary_values_size(dict), 3);
+            }
+
+            SUBCASE("insert with a count")
+            {
+                layout_type dict = make_mutable_dictionary();
+                dict.insert(dict.cbegin() + 1, make_nullable<std::string>("d"), 2);
+                REQUIRE_EQ(dict.size(), 6);
+                CHECK_EQ(dictionary_values_size(dict), 4);
+                const auto& cdict = dict;
+                CHECK_NULLABLE_VARIANT_EQ(cdict[0], std::string_view("a"));
+                CHECK_NULLABLE_VARIANT_EQ(cdict[1], std::string_view("d"));
+                CHECK_NULLABLE_VARIANT_EQ(cdict[2], std::string_view("d"));
+                CHECK_NULLABLE_VARIANT_EQ(cdict[3], std::string_view("b"));
+            }
+
+            SUBCASE("range insert")
+            {
+                layout_type dict = make_mutable_dictionary();
+                const std::vector<nullable<std::string>> values{
+                    make_nullable<std::string>("b"),
+                    make_nullable<std::string>("e"),
+                    make_nullable<std::string>("a")
+                };
+                dict.insert(dict.cbegin(), values);
+                REQUIRE_EQ(dict.size(), 7);
+                CHECK_EQ(dictionary_values_size(dict), 4);
+                const auto& cdict = dict;
+                CHECK_NULLABLE_VARIANT_EQ(cdict[0], std::string_view("b"));
+                CHECK_NULLABLE_VARIANT_EQ(cdict[1], std::string_view("e"));
+                CHECK_NULLABLE_VARIANT_EQ(cdict[2], std::string_view("a"));
+                CHECK_NULLABLE_VARIANT_EQ(cdict[3], std::string_view("a"));
+            }
+
+            SUBCASE("self range insert")
+            {
+                layout_type dict = make_mutable_dictionary();
+                dict.insert(dict.cend(), dict.cbegin(), dict.cend());
+                REQUIRE_EQ(dict.size(), 8);
+                CHECK_EQ(dictionary_values_size(dict), 3);
+                const auto& cdict = dict;
+                const std::array<std::string_view, 8> expected{"a", "b", "c", "a", "a", "b", "c", "a"};
+                for (std::size_t i = 0; i < expected.size(); ++i)
+                {
+                    CHECK_NULLABLE_VARIANT_EQ(cdict[i], expected[i]);
+                }
+            }
+        }
+
+        TEST_CASE("erase")
+        {
+            SUBCASE("erase compacts the dictionary")
+            {
+                layout_type dict = make_mutable_dictionary();
+                dict.erase(dict.cbegin() + 1);
+                REQUIRE_EQ(dict.size(), 3);
+                CHECK_EQ(dictionary_values_size(dict), 2);
+                const auto& cdict = dict;
+                CHECK_NULLABLE_VARIANT_EQ(cdict[0], std::string_view("a"));
+                CHECK_NULLABLE_VARIANT_EQ(cdict[1], std::string_view("c"));
+                CHECK_NULLABLE_VARIANT_EQ(cdict[2], std::string_view("a"));
+            }
+
+            SUBCASE("range erase")
+            {
+                layout_type dict = make_mutable_dictionary();
+                dict.erase(dict.cbegin(), dict.cbegin() + 2);
+                REQUIRE_EQ(dict.size(), 2);
+                CHECK_EQ(dictionary_values_size(dict), 2);
+                const auto& cdict = dict;
+                CHECK_NULLABLE_VARIANT_EQ(cdict[0], std::string_view("c"));
+                CHECK_NULLABLE_VARIANT_EQ(cdict[1], std::string_view("a"));
+            }
+
+            SUBCASE("pop_back empties the array")
+            {
+                layout_type dict = make_mutable_dictionary();
+                dict.pop_back();
+                CHECK_EQ(dict.size(), 3);
+                CHECK_EQ(dictionary_values_size(dict), 3);
+                dict.pop_back();
+                CHECK_EQ(dict.size(), 2);
+                CHECK_EQ(dictionary_values_size(dict), 2);
+                dict.pop_back();
+                CHECK_EQ(dict.size(), 1);
+                CHECK_EQ(dictionary_values_size(dict), 1);
+                dict.pop_back();
+                CHECK(dict.empty());
+                CHECK_EQ(dictionary_values_size(dict), 0);
+            }
+        }
+
+        TEST_CASE("resize")
+        {
+            SUBCASE("grow with null")
+            {
+                layout_type dict = make_mutable_dictionary();
+                dict.resize(6);
+                REQUIRE_EQ(dict.size(), 6);
+                CHECK_FALSE(std::as_const(dict)[4].has_value());
+                CHECK_FALSE(std::as_const(dict)[5].has_value());
+                CHECK_EQ(dictionary_values_size(dict), 3);
+            }
+
+            SUBCASE("grow with a value")
+            {
+                layout_type dict = make_mutable_dictionary();
+                dict.resize(6, make_nullable<std::string>("d"));
+                REQUIRE_EQ(dict.size(), 6);
+                CHECK_EQ(dictionary_values_size(dict), 4);
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[4], std::string_view("d"));
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[5], std::string_view("d"));
+            }
+
+            SUBCASE("shrink compacts the dictionary")
+            {
+                layout_type dict = make_mutable_dictionary();
+                dict.resize(2);
+                REQUIRE_EQ(dict.size(), 2);
+                CHECK_EQ(dictionary_values_size(dict), 2);
+                const auto& cdict = dict;
+                CHECK_NULLABLE_VARIANT_EQ(cdict[0], std::string_view("a"));
+                CHECK_NULLABLE_VARIANT_EQ(cdict[1], std::string_view("b"));
+            }
+
+            SUBCASE("resize to zero")
+            {
+                layout_type dict = make_mutable_dictionary();
+                dict.resize(0);
+                CHECK(dict.empty());
+                CHECK_EQ(dictionary_values_size(dict), 0);
+            }
+        }
+
+        TEST_CASE("mutable_operator[]")
+        {
+            SUBCASE("assignment appends a new value once")
+            {
+                layout_type dict = make_mutable_dictionary();
+                dict[0] = make_nullable<std::string>("d");
+                CHECK_EQ(dictionary_values_size(dict), 4);
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[0], std::string_view("d"));
+                dict[0] = make_nullable<std::string>("d");
+                CHECK_EQ(dictionary_values_size(dict), 4);
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[0], std::string_view("d"));
+            }
+
+            SUBCASE("assignment reuses and compacts")
+            {
+                layout_type dict = make_mutable_dictionary();
+                dict[1] = make_nullable<std::string>("a");
+                CHECK_EQ(dictionary_values_size(dict), 2);
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[1], std::string_view("a"));
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[2], std::string_view("c"));
+            }
+
+            SUBCASE("null nullable assignment clears the validity flag")
+            {
+                layout_type dict = make_mutable_dictionary();
+                dict[0] = make_nullable<std::string>("x", false);
+                CHECK_FALSE(std::as_const(dict)[0].has_value());
+                // "x" is appended by the proxy assignment and stays unreferenced until compaction.
+                CHECK_EQ(dictionary_values_size(dict), 4);
+                dict.set_value(1, make_nullable<std::string>("b"));
+                CHECK_EQ(dictionary_values_size(dict), 3);
+            }
+
+            SUBCASE("direct proxy assignment")
+            {
+                layout_type dict = make_mutable_dictionary();
+                dict[3].get() = layout_type::value_type{make_nullable<std::string>("d")};
+                CHECK_EQ(dictionary_values_size(dict), 4);
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[3], std::string_view("d"));
+
+                dict[2].null_flag() = false;
+                CHECK_FALSE(std::as_const(dict)[2].has_value());
+            }
+        }
+
+        TEST_CASE("mutation_edge_cases")
+        {
+            SUBCASE("sliced arrays cannot be mutated")
+            {
+                layout_type source = make_mutable_dictionary();
+                layout_type dict = source.slice_view(1, 3);
+                const layout_type::value_type value{make_nullable<std::string>("x")};
+                CHECK_THROWS_AS(dict.set_value(0, value), std::logic_error);
+                CHECK_THROWS_AS(dict.set_value(0, sparrow::nullval), std::logic_error);
+                // A sliced view has no mutable bitmap, so use a deep copy with a non-zero offset to
+                // exercise the proxy assignment path.
+                layout_type deep_sliced = source.slice(1, 3);
+                CHECK_THROWS_AS(deep_sliced[0] = make_nullable<std::string>("x"), std::logic_error);
+                CHECK_THROWS_AS(dict.insert(dict.cbegin(), value), std::logic_error);
+                CHECK_THROWS_AS(dict.push_back(value), std::logic_error);
+                CHECK_THROWS_AS(dict.erase(dict.cbegin()), std::logic_error);
+                CHECK_THROWS_AS(dict.pop_back(), std::logic_error);
+                CHECK_THROWS_AS(dict.resize(1), std::logic_error);
+                CHECK_THROWS_AS(dict.resize(4, value), std::logic_error);
+            }
+
+            SUBCASE("the value type must match the dictionary values")
+            {
+                primitive_array<std::int32_t> values{{1, 2}};
+                layout_type dict{layout_type::keys_buffer_type{0, 1}, array{std::move(values)}, true};
+                dict.set_value(0, make_nullable<std::int32_t>(5));
+                CHECK_EQ(dictionary_values_size(dict), 2);
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[0], std::int32_t(5));
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[1], std::int32_t(2));
+                CHECK_THROWS_AS(
+                    dict.push_back(make_nullable<std::int64_t>(std::int64_t{7})),
+                    std::invalid_argument
+                );
+                CHECK_THROWS_AS(dict[0] = make_nullable<std::int64_t>(std::int64_t{7}), std::invalid_argument);
+                CHECK_EQ(dict.size(), 2);
+            }
+
+            SUBCASE("non-nullable arrays only accept non-null values")
+            {
+                primitive_array<std::int32_t> values{{1, 2}};
+                layout_type dict{layout_type::keys_buffer_type{0, 1}, array{std::move(values)}, false};
+
+                CHECK_THROWS_AS(dict[0] = make_nullable<std::int32_t>(5), std::logic_error);
+                CHECK_THROWS_AS(dict.set_value(0, sparrow::nullval), std::invalid_argument);
+                CHECK_THROWS_AS(dict.push_back(nullable<std::int32_t>{}), std::invalid_argument);
+                CHECK_THROWS_AS(dict.resize(3), std::invalid_argument);
+
+                CHECK_NOTHROW(dict.set_value(0, make_nullable<std::int32_t>(5)));
+                CHECK_NOTHROW(dict.push_back(make_nullable<std::int32_t>(6)));
+                CHECK_EQ(dict.size(), 3);
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[0], std::int32_t(5));
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[2], std::int32_t(6));
+            }
+
+            SUBCASE("the dictionary index must fit the key type")
+            {
+                std::vector<nullable<std::string>> dictionary_values;
+                dictionary_values.reserve(127);
+                for (int i = 0; i < 127; ++i)
+                {
+                    dictionary_values.push_back(make_nullable<std::string>("v" + std::to_string(i)));
+                }
+                string_array values{dictionary_values};
+                array values_array{std::move(values)};
+                using small_layout_type = dictionary_encoded_array<std::int8_t>;
+                small_layout_type dict{
+                    small_layout_type::keys_buffer_type{std::int8_t{0}},
+                    std::move(values_array),
+                    true
+                };
+
+                dict.push_back(make_nullable<std::string>("new1"));
+                CHECK_EQ(dictionary_values_size(dict), 128);
+                CHECK_THROWS_AS(dict.push_back(make_nullable<std::string>("new2")), std::overflow_error);
+            }
+        }
+
+        TEST_CASE("untyped_mutation")
+        {
+            layout_type mutable_dict = make_mutable_dictionary();
+            array arr{std::move(mutable_dict)};
+            const array source{make_mutable_dictionary()};
+
+            arr.insert(arr.cend(), source.cbegin(), source.cend());
+            REQUIRE_EQ(arr.size(), 8);
+            REQUIRE(arr.dictionary().has_value());
+            CHECK_EQ(arr.dictionary()->size(), 3);
+
+            arr.erase(arr.cbegin());
+            CHECK_EQ(arr.size(), 7);
+            REQUIRE(arr.dictionary().has_value());
+            CHECK_EQ(arr.dictionary()->size(), 3);
         }
 
 #if defined(__cpp_lib_format)
