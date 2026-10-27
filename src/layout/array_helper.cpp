@@ -14,10 +14,11 @@
 
 #include "sparrow/layout/array_helper.hpp"
 
+#include <iterator>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
-
 
 #include "sparrow/array.hpp"
 #include "sparrow/layout/array_registry.hpp"
@@ -149,6 +150,15 @@ namespace sparrow
             return std::visit(visitor, std::forward<Value>(value));
 #endif
         }
+
+        template <class ARRAY>
+        constexpr bool supports_element_insert_v = is_nullable_v<typename ARRAY::value_type>
+                                                   && requires(
+                                                       ARRAY& array,
+                                                       typename ARRAY::const_iterator pos,
+                                                       const typename ARRAY::value_type& typed_value,
+                                                       std::size_t count
+                                                   ) { array.insert(pos, typed_value, count); };
     }
 
     array make_array_view(const array_wrapper& source)
@@ -183,6 +193,61 @@ namespace sparrow
             array source = array_make_from_element(std::move(value));
             destination.insert(destination.cend(), source.cbegin(), source.cend());
         }
+    }
+
+    void insert_element(array& destination, std::size_t pos, const array_traits::value_type& value)
+    {
+        using value_variant_type = typename array_traits::value_type::base_type;
+
+        destination.visit(
+            [&](const auto& destination_impl)
+            {
+                using destination_array_type = std::decay_t<decltype(destination_impl)>;
+                const std::string destination_format{
+                    data_type_to_format(detail::get_data_type_from_array<destination_array_type>::get())
+                };
+                if constexpr (supports_element_insert_v<destination_array_type>)
+                {
+                    bool inserted = false;
+                    std::visit(
+                        [&](const auto& typed_value)
+                        {
+                            if constexpr (std::same_as<
+                                              std::decay_t<decltype(typed_value)>,
+                                              typename destination_array_type::value_type>)
+                            {
+                                auto& mutable_destination = const_cast<destination_array_type&>(destination_impl
+                                );
+                                auto insert_pos = std::next(
+                                    mutable_destination.cbegin(),
+                                    static_cast<std::ptrdiff_t>(pos)
+                                );
+                                mutable_destination.insert(insert_pos, typed_value, 1);
+                                inserted = true;
+                            }
+                        },
+                        static_cast<const value_variant_type&>(value)
+                    );
+
+                    if (!inserted)
+                    {
+                        throw std::invalid_argument(
+                            "insert_element: value type does not match the destination array value "
+                            "type (destination format: "
+                            + destination_format + ")"
+                        );
+                    }
+                }
+                else
+                {
+                    throw std::runtime_error(
+                        "insert_element: destination array does not support insert(value, count) "
+                        "(destination format: "
+                        + destination_format + ")"
+                    );
+                }
+            }
+        );
     }
 
     std::size_t array_size(const array_wrapper& ar)

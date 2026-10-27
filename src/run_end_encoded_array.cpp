@@ -38,15 +38,6 @@ namespace sparrow
     namespace
     {
         template <class ARRAY>
-        constexpr bool supports_encoded_value_insert_v = is_nullable_v<typename ARRAY::value_type>
-                                                         && requires(
-                                                             ARRAY& array,
-                                                             typename ARRAY::const_iterator pos,
-                                                             const typename ARRAY::value_type& typed_value,
-                                                             std::size_t count
-                                                         ) { array.insert(pos, typed_value, count); };
-
-        template <class ARRAY>
         constexpr bool supports_encoded_value_erase_v = requires(
             ARRAY& array,
             typename ARRAY::const_iterator first,
@@ -204,51 +195,6 @@ namespace sparrow
                 entry.get() = static_cast<acc_type>(shifted_value);
                 entry.null_flag() = true;
             }
-        }
-
-        void insert_encoded_child_value(array& child, std::size_t pos, const array_traits::value_type& value)
-        {
-            using value_variant_type = typename array_traits::value_type::base_type;
-
-            child.visit(
-                [&](const auto& child_impl)
-                {
-                    using child_array_type = std::decay_t<decltype(child_impl)>;
-                    if constexpr (supports_encoded_value_insert_v<child_array_type>)
-                    {
-                        bool inserted = false;
-                        std::visit(
-                            [&](const auto& typed_value)
-                            {
-                                if constexpr (std::same_as<std::decay_t<decltype(typed_value)>, typename child_array_type::value_type>)
-                                {
-                                    auto& mutable_child = const_cast<child_array_type&>(child_impl);
-                                    auto insert_pos = std::next(
-                                        mutable_child.cbegin(),
-                                        static_cast<std::ptrdiff_t>(pos)
-                                    );
-                                    mutable_child.insert(insert_pos, typed_value, 1);
-                                    inserted = true;
-                                }
-                            },
-                            static_cast<const value_variant_type&>(value)
-                        );
-
-                        if (!inserted)
-                        {
-                            throw std::invalid_argument(
-                                "run_end_encoded_array value type does not match encoded values child array"
-                            );
-                        }
-                    }
-                    else
-                    {
-                        throw std::runtime_error(
-                            "run_end_encoded_array encoded values child must support insert(value, count)"
-                        );
-                    }
-                }
-            );
         }
 
         void validate_encoded_child_erase(const array& child)
@@ -625,7 +571,7 @@ namespace sparrow
 
     void run_end_encoded_array::insert_encoded_value(size_type run_index, const value_type& value)
     {
-        insert_encoded_child_value(p_encoded_values_array, run_index, value);
+        insert_element(p_encoded_values_array, run_index, value);
     }
 
     void run_end_encoded_array::erase_encoded_values(size_type run_index, size_type count)
