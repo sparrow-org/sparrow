@@ -356,12 +356,12 @@ The T type can be:
 The most convenient way to construct arrays is using the generic builder:
 
 ```cpp
-#include "sparrow/builder/builder.hpp"
+#include "sparrow/builder.hpp"
 
 // Automatically detects appropriate layout
 auto arr1 = sparrow::build({1, 2, 3, 4});                    // primitive_array<int>
 auto arr2 = sparrow::build({"hello", "world"});              // string_array
-auto arr3 = sparrow::build({{1, 2}, {3, 4, 5}});           // list_array
+auto arr3 = sparrow::build({ {1, 2}, {3, 4, 5} });         // list_array
 auto arr4 = sparrow::build({std::make_tuple(1, "a", 2.0f)}); // struct_array
 ```
 
