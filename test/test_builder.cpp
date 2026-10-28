@@ -61,7 +61,6 @@ namespace sparrow
             }
         }
 
-#ifndef EMSCRIPTEN
         TEST_CASE("timestamp-layout")
         {
             SUBCASE("timestamp_milliseconds_array")
@@ -77,7 +76,6 @@ namespace sparrow
                 REQUIRE_EQ(arr.size(), 3);
             }
         }
-#endif
 
         using duration_testing_types = mpl::rename<duration_types_t, std::tuple>;
 
