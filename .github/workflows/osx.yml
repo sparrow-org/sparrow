@@ -18,7 +18,6 @@ jobs:
       fail-fast: false
       matrix:
         os:
-          - 14
           - 15
         config:
           - { name: Debug }
@@ -26,9 +25,6 @@ jobs:
         compiler:
           - clang
           - apple-clang
-        exclude:
-          - os: 14
-            compiler: apple-clang
 
     steps:
       - name: Checkout code
