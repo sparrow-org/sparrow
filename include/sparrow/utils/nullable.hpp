@@ -460,11 +460,18 @@ namespace sparrow
          * @post null_flag() returns true
          */
         template <class U>
-            requires(not std::same_as<self_type, std::decay_t<U>> and std::constructible_from<T, U &&>)
+            requires(
+                not std::same_as<self_type, std::decay_t<U>> and std::constructible_from<T, U &&>
+                and (not std::is_reference_v<T>
+                     or std::same_as<std::remove_cvref_t<T>, std::remove_cvref_t<U>>)
+            )
         explicit(not std::convertible_to<U&&, T>) constexpr nullable(U&& value) noexcept(
             noexcept(T(std::declval<U>()))
         )
-            : m_value(std::forward<U>(value))
+            // The conversion is requested explicitly: this constructor is also instantiated for
+            // the variant alternatives that overload resolution rejects, and the implicit form
+            // makes every narrowing alternative a -Wconversion error there.
+            : m_value(static_cast<T>(std::forward<U>(value)))
             , m_null_flag(true)
         {
         }
