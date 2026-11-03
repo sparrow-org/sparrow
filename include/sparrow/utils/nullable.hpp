@@ -747,7 +747,10 @@ namespace sparrow
          */
         template <class TO>
             requires(not std::same_as<self_type, TO> and std::assignable_from<std::add_lvalue_reference_t<T>, TO>)
-        constexpr self_type& operator=(TO&& rhs) noexcept
+        constexpr self_type& operator=(TO&& rhs) noexcept(
+            std::is_nothrow_assignable_v<std::add_lvalue_reference_t<T>, TO>
+            && std::is_nothrow_assignable_v<std::add_lvalue_reference_t<B>, bool>
+        )
         {
             m_value = std::forward<TO>(rhs);
             m_null_flag = true;
@@ -765,7 +768,10 @@ namespace sparrow
          * @post has_value() equals rhs.has_value()
          * @post get() is assigned from rhs.get()
          */
-        constexpr self_type& operator=(const self_type& rhs) noexcept
+        constexpr self_type& operator=(const self_type& rhs) noexcept(
+            std::is_nothrow_assignable_v<std::add_lvalue_reference_t<T>, const_reference>
+            && std::is_nothrow_assignable_v<std::add_lvalue_reference_t<B>, flag_const_reference>
+        )
         {
             m_value = rhs.get();
             m_null_flag = rhs.null_flag();
@@ -793,7 +799,10 @@ namespace sparrow
                 and not impl::initializable_from_refs<T, nullable<TO, BO>>
                 and not impl::assignable_from_refs<T, nullable<TO, BO>>
             )
-        constexpr self_type& operator=(const nullable<TO, BO>& rhs) noexcept
+        constexpr self_type& operator=(const nullable<TO, BO>& rhs) noexcept(
+            std::is_nothrow_assignable_v<std::add_lvalue_reference_t<T>, typename nullable<TO, BO>::const_reference>
+            && std::is_nothrow_assignable_v<std::add_lvalue_reference_t<B>, typename nullable<TO, BO>::flag_const_reference>
+        )
         {
             m_value = rhs.get();
             m_null_flag = rhs.null_flag();
@@ -811,7 +820,10 @@ namespace sparrow
          * @post has_value() equals rhs.has_value()
          * @post get() is assigned from std::move(rhs).get()
          */
-        constexpr self_type& operator=(self_type&& rhs) noexcept
+        constexpr self_type& operator=(self_type&& rhs) noexcept(
+            std::is_nothrow_assignable_v<std::add_lvalue_reference_t<T>, rvalue_reference>
+            && std::is_nothrow_assignable_v<std::add_lvalue_reference_t<B>, flag_rvalue_reference>
+        )
         {
             m_value = std::move(rhs).get();
             m_null_flag = std::move(rhs).null_flag();
@@ -839,7 +851,10 @@ namespace sparrow
                 and not impl::initializable_from_refs<T, nullable<TO, BO>>
                 and not impl::assignable_from_refs<T, nullable<TO, BO>>
             )
-        constexpr self_type& operator=(nullable<TO, BO>&& rhs) noexcept
+        constexpr self_type& operator=(nullable<TO, BO>&& rhs) noexcept(
+            std::is_nothrow_assignable_v<std::add_lvalue_reference_t<T>, typename nullable<TO, BO>::rvalue_reference>
+            && std::is_nothrow_assignable_v<std::add_lvalue_reference_t<B>, typename nullable<TO, BO>::flag_rvalue_reference>
+        )
         {
             m_value = std::move(rhs).get();
             m_null_flag = std::move(rhs).null_flag();

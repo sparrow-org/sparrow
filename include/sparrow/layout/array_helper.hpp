@@ -52,6 +52,20 @@ namespace sparrow
     SPARROW_API void
     append_values(array& destination, std::vector<array_traits::value_type>&& values);
 
+    /**
+     * Inserts one type-erased value at the given position in a dynamically typed array.
+     *
+     * The value type must exactly match the destination array value type.
+     *
+     * @param destination The array to insert into.
+     * @param pos The position before which the value is inserted.
+     * @param value The value to insert.
+     *
+     * @throws std::invalid_argument If the value type does not match the destination value type.
+     * @throws std::runtime_error If the destination does not support insertion.
+     */
+    SPARROW_API void insert_element(array& destination, std::size_t pos, const array_traits::value_type& value);
+
     [[nodiscard]] SPARROW_API array
     array_make_from_element(const array_traits::value_type& value);
 
