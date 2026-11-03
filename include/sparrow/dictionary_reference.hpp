@@ -138,7 +138,11 @@ namespace sparrow
                 and not std::same_as<std::decay_t<T>, nullval_t>
                 and dictionary_assignable_nullable<std::decay_t<T>, bool>
             )
-        dictionary_reference& operator=(T&& value);
+        dictionary_reference& operator=(T&& value)
+        {
+            p_array->set_value(m_index, nullable<std::decay_t<T>>(std::forward<T>(value)));
+            return *this;
+        }
 
         /**
          * Assigns a null value to the referenced element.
@@ -209,21 +213,6 @@ namespace sparrow
     auto dictionary_reference<IT>::operator=(const nullable<T, B>& value) -> dictionary_reference&
     {
         p_array->set_value(m_index, value);
-        return *this;
-    }
-
-    template <std::integral IT>
-    template <class T>
-        requires(
-            not std::same_as<std::decay_t<T>, dictionary_reference<IT>> and not is_nullable_v<std::decay_t<T>>
-            and not std::same_as<std::decay_t<T>, typename dictionary_reference<IT>::value_type>
-            and not std::same_as<std::decay_t<T>, typename dictionary_reference<IT>::const_reference>
-            and not std::same_as<std::decay_t<T>, nullval_t>
-            and dictionary_assignable_nullable<std::decay_t<T>, bool>
-        )
-    auto dictionary_reference<IT>::operator=(T&& value) -> dictionary_reference&
-    {
-        p_array->set_value(m_index, nullable<std::decay_t<T>>(std::forward<T>(value)));
         return *this;
     }
 
