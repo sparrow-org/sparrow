@@ -136,7 +136,7 @@ namespace sparrow
                 and not std::same_as<std::decay_t<T>, value_type>
                 and not std::same_as<std::decay_t<T>, const_reference>
                 and not std::same_as<std::decay_t<T>, nullval_t>
-                and (std::constructible_from<value_type, nullable<std::decay_t<T>>> || std::constructible_from<const_reference, nullable<std::decay_t<T>>>)
+                and dictionary_assignable_nullable<std::decay_t<T>, bool>
             )
         dictionary_reference& operator=(T&& value);
 
@@ -219,7 +219,7 @@ namespace sparrow
             and not std::same_as<std::decay_t<T>, typename dictionary_reference<IT>::value_type>
             and not std::same_as<std::decay_t<T>, typename dictionary_reference<IT>::const_reference>
             and not std::same_as<std::decay_t<T>, nullval_t>
-            and (std::constructible_from<typename dictionary_reference<IT>::value_type, nullable<std::decay_t<T>>> || std::constructible_from<typename dictionary_reference<IT>::const_reference, nullable<std::decay_t<T>>>)
+            and dictionary_assignable_nullable<std::decay_t<T>, bool>
         )
     auto dictionary_reference<IT>::operator=(T&& value) -> dictionary_reference&
     {

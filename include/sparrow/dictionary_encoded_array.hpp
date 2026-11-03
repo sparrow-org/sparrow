@@ -593,7 +593,7 @@ namespace sparrow
          * @pre The array must not be sliced (offset() == 0) when the range is not empty.
          */
         template <std::input_iterator InputIt>
-            requires std::convertible_to<std::iter_value_t<InputIt>, value_type>
+            requires std::convertible_to<std::iter_value_t<InputIt>, array_traits::value_type>
         iterator insert(const_iterator pos, InputIt first, InputIt last);
 
         /**
@@ -610,7 +610,7 @@ namespace sparrow
          * @pre The array must not be sliced (offset() == 0) when the range is not empty.
          */
         template <std::ranges::input_range R>
-            requires std::convertible_to<std::ranges::range_value_t<R>, value_type>
+            requires std::convertible_to<std::ranges::range_value_t<R>, array_traits::value_type>
         iterator insert(const_iterator pos, R&& values);
 
         /**
@@ -1575,7 +1575,7 @@ namespace sparrow
 
     template <std::integral IT>
     template <std::input_iterator InputIt>
-        requires std::convertible_to<std::iter_value_t<InputIt>, typename dictionary_encoded_array<IT>::value_type>
+        requires std::convertible_to<std::iter_value_t<InputIt>, array_traits::value_type>
     auto dictionary_encoded_array<IT>::insert(const_iterator pos, InputIt first, InputIt last) -> iterator
     {
         const std::vector<value_type> values(first, last);
@@ -1584,7 +1584,7 @@ namespace sparrow
 
     template <std::integral IT>
     template <std::ranges::input_range R>
-        requires std::convertible_to<std::ranges::range_value_t<R>, typename dictionary_encoded_array<IT>::value_type>
+        requires std::convertible_to<std::ranges::range_value_t<R>, array_traits::value_type>
     auto dictionary_encoded_array<IT>::insert(const_iterator pos, R&& values) -> iterator
     {
         return insert(pos, std::ranges::begin(values), std::ranges::end(values));
