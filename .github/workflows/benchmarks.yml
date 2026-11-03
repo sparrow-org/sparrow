@@ -70,7 +70,7 @@ jobs:
       run: sudo apt-get install tzdata=2024a-2ubuntu1 -y --allow-downgrades
 
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     - name: Set conda environment
       uses: mamba-org/setup-micromamba@main

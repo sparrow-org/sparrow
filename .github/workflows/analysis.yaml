@@ -24,7 +24,7 @@ jobs:
           sudo update-alternatives --set clang-scan-deps /usr/bin/clang-scan-deps-20
 
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set conda environment
         uses: mamba-org/setup-micromamba@main

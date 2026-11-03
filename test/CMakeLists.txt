@@ -92,6 +92,7 @@ set(SPARROW_TESTS_SOURCES
     test_string_array.cpp
     test_struct_array.cpp
     test_time_array.cpp
+    test_timestamp_array.cpp
     test_timestamp_without_timezone_array.cpp
     test_traits.cpp
     test_u8_buffer.cpp
@@ -101,12 +102,6 @@ set(SPARROW_TESTS_SOURCES
     test_utils.hpp
     test_variable_size_binary_view_array.cpp
 )
-
-if(NOT EMSCRIPTEN)
-  list(APPEND SPARROW_TESTS_SOURCES
-    test_timestamp_array.cpp
-  )
-endif()
 
 set(test_target "test_sparrow_lib")
 add_executable(${test_target} ${SPARROW_TESTS_SOURCES})
@@ -124,6 +119,24 @@ if(EMSCRIPTEN)
             doctest::doctest
             better_junit_reporter)
 
+    # howardhinnant_date is built with USE_OS_TZDB, so date::locate_zone reads
+    # TZif files from /usr/share/zoneinfo. Emscripten has no system timezone
+    # database, so preload one into the virtual filesystem.
+    set(SPARROW_TZDATA_DIR "" CACHE PATH "Directory containing the IANA timezone database (TZif files)")
+    if(NOT SPARROW_TZDATA_DIR)
+        foreach(_sparrow_tzdata_candidate IN ITEMS /usr/share/zoneinfo /usr/share/lib/zoneinfo)
+            if(EXISTS "${_sparrow_tzdata_candidate}/UTC"
+               AND EXISTS "${_sparrow_tzdata_candidate}/America/New_York")
+                set(SPARROW_TZDATA_DIR "${_sparrow_tzdata_candidate}" CACHE PATH "Directory containing the IANA timezone database (TZif files)" FORCE)
+                break()
+            endif()
+        endforeach()
+    endif()
+    if(NOT EXISTS "${SPARROW_TZDATA_DIR}/UTC")
+        message(FATAL_ERROR "Could not find a timezone database. Set SPARROW_TZDATA_DIR to a directory containing IANA TZif files.")
+    endif()
+    message(STATUS "Preloading IANA timezone database from ${SPARROW_TZDATA_DIR}")
+
     target_link_options(${test_target}
         PUBLIC "SHELL: -fwasm-exceptions"
         PUBLIC "SHELL: -fPIC"
@@ -134,6 +147,7 @@ if(EMSCRIPTEN)
         PUBLIC "SHELL: -s STACK_SIZE=32mb"
         PUBLIC "SHELL: -s INITIAL_MEMORY=128mb"
         PUBLIC "SHELL: --preload-file ${SYSROOT_PATH}/include@/include"
+        PUBLIC "SHELL: --preload-file ${SPARROW_TZDATA_DIR}@/usr/share/zoneinfo"
     )
 else()
     target_link_libraries(${test_target}
