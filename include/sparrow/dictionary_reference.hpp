@@ -132,9 +132,9 @@ namespace sparrow
          */
         template <class T>
             requires(
-                not std::same_as<std::decay_t<T>, dictionary_reference> and not is_nullable_v<std::decay_t<T>>
-                and not std::same_as<std::decay_t<T>, value_type>
-                and not std::same_as<std::decay_t<T>, const_reference>
+                not std::same_as<std::decay_t<T>, dictionary_reference<IT>> and not is_nullable_v<std::decay_t<T>>
+                and not std::same_as<std::decay_t<T>, typename dictionary_reference<IT>::value_type>
+                and not std::same_as<std::decay_t<T>, typename dictionary_reference<IT>::const_reference>
                 and not std::same_as<std::decay_t<T>, nullval_t>
                 and dictionary_assignable_nullable<std::decay_t<T>, bool>
             )
