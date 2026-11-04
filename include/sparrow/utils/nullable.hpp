@@ -483,9 +483,6 @@ namespace sparrow
         explicit(not std::convertible_to<U&&, T>) constexpr nullable(U&& value) noexcept(
             noexcept(T(std::declval<U>()))
         )
-            // The conversion is requested explicitly: this constructor is also instantiated for
-            // the variant alternatives that overload resolution rejects, and the implicit form
-            // makes every narrowing alternative a -Wconversion error there.
             : m_value(static_cast<T>(std::forward<U>(value)))
             , m_null_flag(true)
         {
