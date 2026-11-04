@@ -1849,9 +1849,8 @@ namespace sparrow
             }
             compacted_structures = extract_arrow_structures(std::move(compacted));
         }
-        m_proxy.set_dictionary(std::move(compacted_structures.first), std::move(compacted_structures.second));
-        p_values_layout = create_values_layout(m_proxy);
-
+        // Rewrite the keys before replacing the dictionary, then rebuild both layouts: the keys
+        // layout caches a proxy over the current dictionary child, which set_dictionary releases.
         for (size_type i = 0; i < item_count; ++i)
         {
             if (valid_bits != nullptr && !is_bit_set(valid_bits, i))
@@ -1863,6 +1862,9 @@ namespace sparrow
                 keys[i] = static_cast<IT>(remapping[static_cast<size_type>(keys[i])] - IT{1});
             }
         }
+        m_proxy.set_dictionary(std::move(compacted_structures.first), std::move(compacted_structures.second));
+        m_keys_layout = create_keys_layout(m_proxy);
+        p_values_layout = create_values_layout(m_proxy);
     }
 
     template <std::integral IT>
