@@ -341,6 +341,39 @@ The T type can be:
 
 **Apache Arrow specification:** [Dictionary Encoding](https://arrow.apache.org/docs/format/Columnar.html#dictionary-encoded-layout)
 
+**Buffers:** the array holds the keys, one integer per element with a validity bitmap, and the
+dictionary, a child array of the unique values. A null element stores the key 0 with its validity
+bit cleared and never references a dictionary entry; any non-null key is a valid dictionary index.
+
+**Mutation:** `dictionary_encoded_array` is mutable and maintains its dictionary automatically. An
+array created as non-nullable only accepts non-null values: `set_value` rejects null values and the
+mutable `operator[]` is unavailable.
+
+- **Inserting** (`insert`, `push_back`, growing `resize`): the value is encoded by a linear scan of
+  the dictionary; an equal entry reuses its key, an absent value is appended at the end with a new
+  key. The keys buffer is then grown, which may reallocate it, and the validity bitmap extended.
+  Entries are only appended, so the keys of the elements already present keep their index.
+  `insert(pos, value, count)` encodes the value once and reuses that key for the copies, while the
+  range overloads encode each value.
+- **Modifying** (`set_value`, assignment through `operator[]`): the new value is encoded like an
+  insertion, the key and the validity bit are written in place, then the dictionary is compacted.
+  If an entry lost its last reference, it is dropped, the dictionary child is replaced by a
+  compacted copy, and every key is renumbered.
+- **Deleting** (`erase`, `pop_back`, shrinking `resize`): the keys are removed and the dictionary is
+  compacted, renumbering the entries that are still referenced. When no entry became unreferenced
+  the dictionary child is left untouched and only the keys buffer shrinks.
+
+**Invalidations:** every mutation refreshes the cached buffer views of the Arrow structures, and
+reallocates the keys buffer when its size changes. Iterators, element proxies and references into
+the dictionary obtained before a mutation must not be used afterwards; proxies are index based, so
+one whose index is still in range denotes that position of the array rather than the element it was
+created from. Mutations are not supported on slices with a non-zero Arrow offset and throw
+`std::logic_error`; storing null in a non-nullable array throws `std::invalid_argument`, and a
+dictionary index that does not fit the key type throws `std::overflow_error`. Assigning a nullable
+whose value is null (for example `sp::make_nullable<std::string>("x", false)`) adds `"x"` to the
+dictionary before clearing the validity bit, so the entry stays unreferenced until the next
+compacting operation; assigning `sp::nullval`, or calling `set_value(i, sp::nullval)`, avoids it.
+
 #### run_end_encoded_array
 **Header:** `sparrow/run_end_encoded_array.hpp`
 

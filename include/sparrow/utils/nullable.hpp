@@ -454,20 +454,42 @@ namespace sparrow
          * @param value Value to store
          *
          * @pre U must be constructible to T
+         * @pre If T is a reference, U must have the same decayed type, so that the reference is
+         *      never bound to a temporary produced by a conversion
          * @pre U must not be the same type as nullable (to avoid recursion)
          * @post has_value() returns true
          * @post get() returns the constructed value
          * @post null_flag() returns true
          */
+        // This constructor is instantiated by the overload resolution of the std::variant
+        // alternatives of nullable_variant (a std::variant of nullable<...>), including the
+        // alternatives that are never selected. Those instantiations perform the implicit
+        // conversion to T, so clang diagnoses narrowing for every numeric alternative even
+        // though the exact-match alternative is always the one chosen.
+#if defined(__clang__)
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wimplicit-int-conversion"
+#    pragma clang diagnostic ignored "-Wimplicit-int-float-conversion"
+#    pragma clang diagnostic ignored "-Wimplicit-float-conversion"
+#    pragma clang diagnostic ignored "-Wshorten-64-to-32"
+#    pragma clang diagnostic ignored "-Wsign-conversion"
+#endif
         template <class U>
-            requires(not std::same_as<self_type, std::decay_t<U>> and std::constructible_from<T, U &&>)
+            requires(
+                not std::same_as<self_type, std::decay_t<U>> and std::constructible_from<T, U &&>
+                and (not std::is_reference_v<T>
+                     or std::same_as<std::remove_cvref_t<T>, std::remove_cvref_t<U>>)
+            )
         explicit(not std::convertible_to<U&&, T>) constexpr nullable(U&& value) noexcept(
             noexcept(T(std::declval<U>()))
         )
-            : m_value(std::forward<U>(value))
+            : m_value(static_cast<T>(std::forward<U>(value)))
             , m_null_flag(true)
         {
         }
+#if defined(__clang__)
+#    pragma clang diagnostic pop
+#endif
 
         /**
          * @brief Default copy constructor.
