@@ -1175,9 +1175,6 @@ namespace sparrow
         const auto size = keys.size();
         if (validity.has_value() && validity->data() == nullptr)
         {
-            // Allocate the storage of a lazily allocated all-valid bitmap: writing a single
-            // bit through the mutable bitmap of the created proxy would otherwise reallocate
-            // the buffer and leave the proxy's cached bitmap views dangling or stale.
             validity = validity_bitmap(size, true, validity_bitmap::default_allocator());
         }
         auto [value_array, value_schema] = extract_arrow_structures(std::move(values));
@@ -1786,14 +1783,15 @@ namespace sparrow
         {
             return;
         }
-        std::vector<size_type> reference_counts(dictionary_size, 0);
-        // Iterate over the raw key buffer and validity words: going through the layout accessors
-        // creates one proxy per element, which dominates the cost of the scan.
         auto& keys_proxy = detail::array_access::get_arrow_proxy(m_keys_layout);
         IT* keys = const_cast<IT*>(static_cast<const IT*>(keys_proxy.array().buffers[1]));
         SPARROW_ASSERT_TRUE(keys != nullptr);
         const auto& validity = keys_proxy.bitmap();
         const std::uint8_t* valid_bits = validity.has_value() ? validity->data() : nullptr;
+
+        // A non-zero entry marks a still referenced key. The marks are then replaced by the new
+        // key, shifted by one so that zero keeps meaning "no longer referenced".
+        std::vector<IT> remapping(dictionary_size, IT{});
         for (size_type i = 0; i < item_count; ++i)
         {
             if (valid_bits != nullptr && !is_bit_set(valid_bits, i))
@@ -1802,15 +1800,21 @@ namespace sparrow
             }
             const auto key = static_cast<size_type>(keys[i]);
             SPARROW_ASSERT_TRUE(key < dictionary_size);
-            ++reference_counts[key];
+            remapping[key] = IT{1};
         }
         size_type compacted_size = 0;
-        std::vector<IT> remapping(dictionary_size, IT{});
+        size_type first_kept = dictionary_size;
+        size_type last_kept = 0;
         for (size_type key = 0; key < dictionary_size; ++key)
         {
-            if (reference_counts[key] != 0)
+            if (remapping[key] != IT{})
             {
-                remapping[key] = static_cast<IT>(compacted_size++);
+                if (first_kept == dictionary_size)
+                {
+                    first_kept = key;
+                }
+                last_kept = key;
+                remapping[key] = static_cast<IT>(++compacted_size);
             }
         }
         if (compacted_size == dictionary_size)
@@ -1822,12 +1826,25 @@ namespace sparrow
         {
             // Both locals end before set_dictionary releases the old nested structures.
             array values = make_array_view(*p_values_layout);
-            array compacted = array_empty_like(values);
-            for (size_type key = 0; key < dictionary_size; ++key)
+            // Surviving keys that form a single run (pop_back, resize, erasing at an end, a single
+            // orphaned entry) are a slice of the current dictionary: rebuilding them one by one
+            // would reallocate the child buffers for every entry.
+            const bool contiguous = compacted_size == 0 || last_kept - first_kept + 1 == compacted_size;
+            array compacted = contiguous && compacted_size != 0
+                                  ? values.slice(first_kept, last_kept + 1)
+                                  : array_empty_like(values);
+            if (!contiguous)
             {
-                if (reference_counts[key] != 0)
+                for (size_type key = 0; key < dictionary_size; ++key)
                 {
-                    insert_element(compacted, compacted.size(), value_type(array_element(*p_values_layout, key)));
+                    if (remapping[key] != IT{})
+                    {
+                        insert_element(
+                            compacted,
+                            compacted.size(),
+                            value_type(array_element(*p_values_layout, key))
+                        );
+                    }
                 }
             }
             compacted_structures = extract_arrow_structures(std::move(compacted));
@@ -1843,7 +1860,7 @@ namespace sparrow
             }
             else
             {
-                keys[i] = remapping[static_cast<size_type>(keys[i])];
+                keys[i] = static_cast<IT>(remapping[static_cast<size_type>(keys[i])] - IT{1});
             }
         }
     }
