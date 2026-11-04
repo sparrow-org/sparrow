@@ -276,13 +276,13 @@ namespace sparrow
         using dictionary_reference_type = dictionary_reference<IT>;
         using reference = nullable<dictionary_reference_type, bitmap_reference>;
 
+        // Iteration is read-only: mutable access goes through the operator[] proxy, so the
+        // iterator and const_iterator are the same type.
         using functor_type = layout_element_functor<self_type, true>;
-        using const_functor_type = layout_element_functor<self_type, true>;
-
         using iterator = functor_index_iterator<functor_type>;
+        using const_iterator = iterator;
         using reverse_iterator = std::reverse_iterator<iterator>;
-        using const_iterator = functor_index_iterator<const_functor_type>;
-        using const_reverse_iterator = std::reverse_iterator<const_iterator>;
+        using const_reverse_iterator = reverse_iterator;
 
         using keys_buffer_type = u8_buffer<IT>;
 
@@ -382,20 +382,6 @@ namespace sparrow
         [[nodiscard]] reference operator[](size_type i);
 
         /**
-         * Gets an iterator to the beginning of the array.
-         *
-         * @return Iterator to the beginning.
-         */
-        [[nodiscard]] constexpr iterator begin();
-
-        /**
-         * Gets an iterator to the end of the array.
-         *
-         * @return Iterator to the end.
-         */
-        [[nodiscard]] constexpr iterator end();
-
-        /**
          * Gets a constant iterator to the beginning of the array.
          *
          * @return Constant iterator to the beginning.
@@ -422,20 +408,6 @@ namespace sparrow
          * @return Constant iterator to the end.
          */
         [[nodiscard]] constexpr const_iterator cend() const;
-
-        /**
-         * Gets a reverse iterator to the beginning of the array.
-         *
-         * @return Reverse iterator to the beginning.
-         */
-        [[nodiscard]] constexpr reverse_iterator rbegin();
-
-        /**
-         * Gets a reverse iterator to the end of the array.
-         *
-         * @return Reverse iterator to the end.
-         */
-        [[nodiscard]] constexpr reverse_iterator rend();
 
         /**
          * Gets a constant reverse iterator to the beginning of the array.
@@ -1326,18 +1298,6 @@ namespace sparrow
     }
 
     template <std::integral IT>
-    constexpr auto dictionary_encoded_array<IT>::begin() -> iterator
-    {
-        return iterator(functor_type(this), 0u);
-    }
-
-    template <std::integral IT>
-    constexpr auto dictionary_encoded_array<IT>::end() -> iterator
-    {
-        return iterator(functor_type(this), size());
-    }
-
-    template <std::integral IT>
     constexpr auto dictionary_encoded_array<IT>::begin() const -> const_iterator
     {
         return cbegin();
@@ -1352,25 +1312,13 @@ namespace sparrow
     template <std::integral IT>
     constexpr auto dictionary_encoded_array<IT>::cbegin() const -> const_iterator
     {
-        return const_iterator(const_functor_type(this), 0u);
+        return const_iterator(functor_type(this), 0u);
     }
 
     template <std::integral IT>
     constexpr auto dictionary_encoded_array<IT>::cend() const -> const_iterator
     {
-        return const_iterator(const_functor_type(this), size());
-    }
-
-    template <std::integral IT>
-    constexpr auto dictionary_encoded_array<IT>::rbegin() -> reverse_iterator
-    {
-        return reverse_iterator(end());
-    }
-
-    template <std::integral IT>
-    [[nodiscard]] constexpr auto dictionary_encoded_array<IT>::rend() -> reverse_iterator
-    {
-        return reverse_iterator(begin());
+        return const_iterator(functor_type(this), size());
     }
 
     template <std::integral IT>
