@@ -1838,15 +1838,22 @@ namespace sparrow
             return;
         }
         std::vector<size_type> reference_counts(dictionary_size, 0);
+        // Iterate over the raw key buffer and validity words: going through the layout accessors
+        // creates one proxy per element, which dominates the cost of the scan.
+        auto& keys_proxy = detail::array_access::get_arrow_proxy(m_keys_layout);
+        IT* keys = const_cast<IT*>(static_cast<const IT*>(keys_proxy.array().buffers[1]));
+        SPARROW_ASSERT_TRUE(keys != nullptr);
+        const auto& validity = keys_proxy.bitmap();
+        const std::uint8_t* valid_bits = validity.has_value() ? validity->data() : nullptr;
         for (size_type i = 0; i < item_count; ++i)
         {
-            const auto entry = m_keys_layout[i];
-            if (entry.has_value())
+            if (valid_bits != nullptr && (valid_bits[i / 8] & static_cast<std::uint8_t>(1u << (i % 8))) == 0)
             {
-                const auto key = static_cast<size_type>(entry.get());
-                SPARROW_ASSERT_TRUE(key < dictionary_size);
-                ++reference_counts[key];
+                continue;
             }
+            const auto key = static_cast<size_type>(keys[i]);
+            SPARROW_ASSERT_TRUE(key < dictionary_size);
+            ++reference_counts[key];
         }
         size_type compacted_size = 0;
         std::vector<IT> remapping(dictionary_size, IT{});
@@ -1881,14 +1888,13 @@ namespace sparrow
 
         for (size_type i = 0; i < item_count; ++i)
         {
-            auto entry = m_keys_layout[i];
-            if (entry.has_value())
+            if (valid_bits != nullptr && (valid_bits[i / 8] & static_cast<std::uint8_t>(1u << (i % 8))) == 0)
             {
-                entry.get() = remapping[static_cast<size_type>(entry.get())];
+                keys[i] = IT{};
             }
             else
             {
-                entry.get() = IT{};
+                keys[i] = remapping[static_cast<size_type>(keys[i])];
             }
         }
     }
