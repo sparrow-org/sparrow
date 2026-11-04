@@ -37,6 +37,7 @@
 #include "sparrow/layout/nested_value_types.hpp"
 #include "sparrow/primitive_array.hpp"
 #include "sparrow/types/data_traits.hpp"
+#include "sparrow/utils/bit.hpp"
 #include "sparrow/utils/contracts.hpp"
 #include "sparrow/utils/functor_index_iterator.hpp"
 #include "sparrow/utils/memory.hpp"
@@ -1847,7 +1848,7 @@ namespace sparrow
         const std::uint8_t* valid_bits = validity.has_value() ? validity->data() : nullptr;
         for (size_type i = 0; i < item_count; ++i)
         {
-            if (valid_bits != nullptr && (valid_bits[i / 8] & static_cast<std::uint8_t>(1u << (i % 8))) == 0)
+            if (valid_bits != nullptr && !is_bit_set(valid_bits, i))
             {
                 continue;
             }
@@ -1888,7 +1889,7 @@ namespace sparrow
 
         for (size_type i = 0; i < item_count; ++i)
         {
-            if (valid_bits != nullptr && (valid_bits[i / 8] & static_cast<std::uint8_t>(1u << (i % 8))) == 0)
+            if (valid_bits != nullptr && !is_bit_set(valid_bits, i))
             {
                 keys[i] = IT{};
             }

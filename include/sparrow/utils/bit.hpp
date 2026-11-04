@@ -18,9 +18,26 @@
 #include <array>
 #include <bit>
 #include <concepts>
+#include <cstddef>
+#include <cstdint>
 
 namespace sparrow
 {
+    /**
+     * Checks whether the bit at the given position is set in a bitmap.
+     *
+     * Bits are laid out the way Apache Arrow stores validity bitmaps: the bit of index \p pos is
+     * the (pos % 8)-th bit of the (pos / 8)-th byte, counted from the least significant bit.
+     *
+     * @param bits The bitmap.
+     * @param pos The position of the bit to read.
+     * @return true if the bit at \p pos is set.
+     */
+    [[nodiscard]] constexpr bool is_bit_set(const std::uint8_t* bits, std::size_t pos) noexcept
+    {
+        return (bits[pos / 8] & static_cast<std::uint8_t>(1u << (pos % 8))) != 0;
+    }
+
     /**
      * Reverses the bytes in the given integer value.
      * \tparam T The type of the integer value.
