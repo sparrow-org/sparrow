@@ -8,7 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or mplied.
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -161,14 +161,6 @@ namespace sparrow
         dictionary_reference& operator=(const dictionary_reference& rhs);
 
         /**
-         * Assigns the value referenced by another proxy to the referenced element.
-         *
-         * @param rhs The reference to move from.
-         * @return Reference to this dictionary_reference.
-         */
-        dictionary_reference& operator=(dictionary_reference&& rhs);
-
-        /**
          * Converts to the read-only element reference.
          *
          * @return The referenced element.
@@ -219,7 +211,8 @@ namespace sparrow
     template <std::integral IT>
     auto dictionary_reference<IT>::operator=(nullval_t) -> dictionary_reference&
     {
-        return operator=(value_type(nullable<null_type>{}));
+        p_array->set_value(m_index, nullval);
+        return *this;
     }
 
     template <std::integral IT>
@@ -231,12 +224,6 @@ namespace sparrow
             p_array->set_value(m_index, value);
         }
         return *this;
-    }
-
-    template <std::integral IT>
-    auto dictionary_reference<IT>::operator=(dictionary_reference&& rhs) -> dictionary_reference&
-    {
-        return operator=(static_cast<const dictionary_reference&>(rhs));
     }
 
     template <std::integral IT>
