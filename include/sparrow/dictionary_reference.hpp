@@ -82,18 +82,37 @@ namespace sparrow
         /**
          * Assigns a value to the referenced element.
          *
+         * This is a template constrained to value_type so that overload resolution never tries to
+         * convert another argument type to the variant value_type, which would instantiate the
+         * converting constructors of all its alternatives.
+         *
+         * @tparam V The assigned type, which must be value_type.
          * @param value The value to assign.
          * @return Reference to this dictionary_reference.
          */
-        dictionary_reference& operator=(const value_type& value);
+        template <class V>
+            requires std::same_as<V, value_type>
+        dictionary_reference& operator=(const V& value)
+        {
+            p_array->set_value(m_index, value);
+            return *this;
+        }
 
         /**
-         * Assigns a value to the referenced element.
+         * Assigns a read-only element to the referenced element.
          *
-         * @param value The value to assign.
+         * Constrained to const_reference for the same reason as the value_type overload.
+         *
+         * @tparam V The assigned type, which must be const_reference.
+         * @param value The element to assign.
          * @return Reference to this dictionary_reference.
          */
-        dictionary_reference& operator=(const const_reference& value);
+        template <class V>
+            requires std::same_as<V, const_reference>
+        dictionary_reference& operator=(const V& value)
+        {
+            return operator=(value_type(value));
+        }
 
         /**
          * Assigns a nullable value to the referenced element.
@@ -132,7 +151,8 @@ namespace sparrow
          */
         template <class T>
             requires(
-                not std::same_as<std::decay_t<T>, dictionary_reference<IT>> and not is_nullable_v<std::decay_t<T>>
+                not std::same_as<std::decay_t<T>, dictionary_reference<IT>>
+                and not is_nullable_v<std::decay_t<T>>
                 and not std::same_as<std::decay_t<T>, typename dictionary_reference<IT>::value_type>
                 and not std::same_as<std::decay_t<T>, typename dictionary_reference<IT>::const_reference>
                 and not std::same_as<std::decay_t<T>, nullval_t>
@@ -184,19 +204,6 @@ namespace sparrow
         : p_array(array)
         , m_index(index)
     {
-    }
-
-    template <std::integral IT>
-    auto dictionary_reference<IT>::operator=(const value_type& value) -> dictionary_reference&
-    {
-        p_array->set_value(m_index, value);
-        return *this;
-    }
-
-    template <std::integral IT>
-    auto dictionary_reference<IT>::operator=(const const_reference& value) -> dictionary_reference&
-    {
-        return operator=(value_type(value));
     }
 
     template <std::integral IT>
