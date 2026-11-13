@@ -368,8 +368,10 @@ reallocates the keys buffer when its size changes. Iterators, element proxies an
 the dictionary obtained before a mutation must not be used afterwards; proxies are index based, so
 one whose index is still in range denotes that position of the array rather than the element it was
 created from. Mutations are not supported on slices with a non-zero Arrow offset and throw
-`std::logic_error`; storing null in a non-nullable array throws `std::invalid_argument`, and a
-dictionary index that does not fit the key type throws `std::overflow_error`. Assigning a nullable
+`std::logic_error`, nor on arrays that sparrow does not own (views created by `slice_view`,
+imported arrays), which throw `sparrow::arrow_proxy_exception`; both are detected before anything
+is modified. Storing null in a non-nullable array throws `std::invalid_argument`, and a dictionary
+index that does not fit the key type throws `std::overflow_error`. Assigning a nullable
 whose value is null (for example `sp::make_nullable<std::string>("x", false)`) adds `"x"` to the
 dictionary before clearing the validity bit, so the entry stays unreferenced until the next
 compacting operation; assigning `sp::nullval` to the element proxy (`dict[i].get() = sp::nullval`)

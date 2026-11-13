@@ -245,7 +245,10 @@ namespace sparrow
      * based, so a proxy whose index is still in range keeps referring to that position of the
      * array, not to the element it was created from. Mutations require an unsliced array
      * (offset() == 0) and throw std::logic_error otherwise, because rewriting the keys of a slice
-     * would change elements outside of it. Mutating a non-nullable array with a null value throws
+     * would change elements outside of it. They also require an array created with sparrow: the
+     * buffers and the dictionary of a view (slice_view) or of an imported array are shared and
+     * cannot be rewritten, so the mutation throws arrow_proxy_exception. Both checks are made
+     * before anything is modified. Mutating a non-nullable array with a null value throws
      * std::invalid_argument, and a dictionary index that does not fit the key type throws
      * std::overflow_error.
      *
@@ -891,11 +894,19 @@ namespace sparrow
         [[nodiscard]] iterator make_iterator(size_type index) const;
 
         /**
-         * Throws if the array is sliced (non-zero offset), which mutation does not support.
+         * Throws if the array cannot be mutated.
+         *
+         * Every mutation calls it first, before any key, validity bit or dictionary entry is
+         * modified, so a rejected mutation leaves the array untouched.
          *
          * @param operation The name of the attempted operation.
+         *
+         * @throws std::logic_error if the array is sliced (non-zero offset): rewriting the keys
+         * of a slice would change elements outside of it.
+         * @throws arrow_proxy_exception if the array was not created with sparrow (a view or an
+         * imported array): its buffers and its dictionary are shared and cannot be rewritten.
          */
-        void throw_if_sliced_for_mutation(const char* operation) const;
+        void throw_if_not_mutable(const char* operation) const;
 
         /**
          * Converts a position in the array into an index.
@@ -1468,7 +1479,7 @@ namespace sparrow
     void dictionary_encoded_array<IT>::set_value(size_type index, const value_type& value)
     {
         SPARROW_ASSERT_TRUE(index < size());
-        throw_if_sliced_for_mutation("dictionary_encoded_array::set_value");
+        throw_if_not_mutable("dictionary_encoded_array::set_value");
         const bool valid = value.has_value();
         if (!valid && !is_nullable())
         {
@@ -1505,7 +1516,7 @@ namespace sparrow
         {
             return make_iterator(index);
         }
-        throw_if_sliced_for_mutation("dictionary_encoded_array::insert");
+        throw_if_not_mutable("dictionary_encoded_array::insert");
         return insert_keys_at(index, std::vector<nullable<IT>>(count, encode_value(value)));
     }
 
@@ -1560,7 +1571,7 @@ namespace sparrow
         {
             return make_iterator(index);
         }
-        throw_if_sliced_for_mutation("dictionary_encoded_array::insert");
+        throw_if_not_mutable("dictionary_encoded_array::insert");
         std::vector<nullable<IT>> keys;
         keys.reserve(values.size());
         for (const auto& value : values)
@@ -1607,7 +1618,7 @@ namespace sparrow
         {
             return make_iterator(index);
         }
-        throw_if_sliced_for_mutation("dictionary_encoded_array::erase");
+        throw_if_not_mutable("dictionary_encoded_array::erase");
         m_keys_layout.erase(
             std::next(m_keys_layout.cbegin(), static_cast<std::ptrdiff_t>(index)),
             std::next(m_keys_layout.cbegin(), static_cast<std::ptrdiff_t>(index + count))
@@ -1673,11 +1684,17 @@ namespace sparrow
     }
 
     template <std::integral IT>
-    void dictionary_encoded_array<IT>::throw_if_sliced_for_mutation(const char* operation) const
+    void dictionary_encoded_array<IT>::throw_if_not_mutable(const char* operation) const
     {
         if (offset() != 0)
         {
             throw std::logic_error(std::string(operation) + " does not support sliced arrays (non-zero offset)");
+        }
+        if (!m_proxy.is_created_with_sparrow())
+        {
+            throw arrow_proxy_exception(
+                std::string(operation) + " requires an array created with sparrow, not a view or an imported array"
+            );
         }
     }
 
@@ -1776,6 +1793,10 @@ namespace sparrow
     template <std::integral IT>
     void dictionary_encoded_array<IT>::compact_dictionary()
     {
+        // Every mutation calls throw_if_not_mutable before modifying anything. The keys are
+        // rewritten in place below, so set_dictionary, which throws on an array that sparrow does
+        // not own, must not be the first operation to notice.
+        SPARROW_ASSERT_TRUE(m_proxy.is_created_with_sparrow());
         const size_type dictionary_size = array_size(*p_values_layout);
         const size_type item_count = size();
         if (dictionary_size == 0)
@@ -1783,6 +1804,7 @@ namespace sparrow
             return;
         }
         auto& keys_proxy = detail::array_access::get_arrow_proxy(m_keys_layout);
+        // The buffers of an array created with sparrow are owned by it, hence writable.
         IT* keys = const_cast<IT*>(static_cast<const IT*>(keys_proxy.array().buffers[1]));
         SPARROW_ASSERT_TRUE(keys != nullptr);
         const auto& validity = keys_proxy.bitmap();

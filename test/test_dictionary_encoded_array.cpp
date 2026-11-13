@@ -795,6 +795,27 @@ namespace sparrow
                 CHECK_THROWS_AS(dict.resize(4, value), std::logic_error);
             }
 
+            SUBCASE("arrays not owned by sparrow are rejected before anything is modified")
+            {
+                // A view with a zero offset shares the keys and the dictionary of its source.
+                layout_type source = make_mutable_dictionary();
+                layout_type view = source.slice_view(0, source.size());
+                const layout_type::value_type value{make_nullable<std::string>("x")};
+                CHECK_THROWS_AS(view.insert(view.cbegin(), value), arrow_proxy_exception);
+                CHECK_THROWS_AS(view.push_back(value), arrow_proxy_exception);
+                CHECK_THROWS_AS(view.erase(view.cbegin()), arrow_proxy_exception);
+                CHECK_THROWS_AS(view.pop_back(), arrow_proxy_exception);
+                CHECK_THROWS_AS(view.resize(2), arrow_proxy_exception);
+                CHECK_THROWS_AS(view.resize(6, value), arrow_proxy_exception);
+
+                REQUIRE_EQ(source.size(), 4);
+                CHECK_EQ(dictionary_values_size(source), 3);
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(source)[0], std::string_view("a"));
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(source)[1], std::string_view("b"));
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(source)[2], std::string_view("c"));
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(source)[3], std::string_view("a"));
+            }
+
             SUBCASE("the value type must match the dictionary values")
             {
                 primitive_array<std::int32_t> values{{1, 2}};
