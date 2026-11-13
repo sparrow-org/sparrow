@@ -14,6 +14,7 @@
 
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -830,6 +831,30 @@ namespace sparrow
                 );
                 CHECK_THROWS_AS(dict[0] = make_nullable<std::int64_t>(std::int64_t{7}), std::invalid_argument);
                 CHECK_EQ(dict.size(), 2);
+            }
+
+            SUBCASE("a NaN and the signed zeros each share one dictionary entry")
+            {
+                const auto check = []<class T>(const T& one)
+                {
+                    const T nan = std::numeric_limits<T>::quiet_NaN();
+                    const T zero = static_cast<T>(0);
+                    const T negative_zero = -zero;
+                    primitive_array<T> values{{one, nan}};
+                    layout_type dict{layout_type::keys_buffer_type{0, 1}, array{std::move(values)}, true};
+
+                    dict.push_back(nullable<T>(nan));
+                    dict.push_back(nullable<T>(nan));
+                    CHECK_EQ(dictionary_values_size(dict), 2);
+
+                    dict.push_back(nullable<T>(zero));
+                    dict.push_back(nullable<T>(negative_zero));
+                    CHECK_EQ(dictionary_values_size(dict), 3);
+                    CHECK_EQ(dict.size(), 6);
+                };
+                check(float16_t(1.0f));
+                check(float32_t(1.0f));
+                check(float64_t(1.0));
             }
 
             SUBCASE("non-nullable arrays only accept non-null values")

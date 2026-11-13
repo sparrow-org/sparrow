@@ -354,7 +354,9 @@ array created as non-nullable only accepts non-null values: storing a null throw
   key. The keys buffer is then grown, which may reallocate it, and the validity bitmap extended.
   Entries are only appended, so the keys of the elements already present keep their index.
   `insert(pos, value, count)` encodes the value once and reuses that key for the copies, while the
-  range overloads encode each value.
+  range overloads encode each value. Floating-point values are compared with `std::weak_order`, so
+  a NaN reuses the NaN already stored (all the NaNs of the same sign are equal) and `+0.0` and
+  `-0.0` share one entry.
 - **Modifying** (assignment through `operator[]`): the new value is encoded like an
   insertion, the key and the validity bit are written in place, then the dictionary is compacted.
   If an entry lost its last reference, it is dropped, the dictionary child is replaced by a

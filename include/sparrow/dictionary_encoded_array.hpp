@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <compare>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
@@ -159,9 +160,31 @@ namespace sparrow
     namespace detail
     {
         /**
+         * Compares two floating-point dictionary values with std::weak_order rather than
+         * operator==, which never matches a NaN: a NaN would not find the one already stored, and
+         * every lookup of it would append a new entry. All the NaNs of the same sign are
+         * equivalent, and so are +0.0 and -0.0.
+         */
+        template <class T>
+            requires(std::floating_point<T> or std::same_as<T, float16_t>)
+        [[nodiscard]] bool dictionary_floating_point_equal(const T& lhs, const T& rhs)
+        {
+            if constexpr (std::floating_point<T>)
+            {
+                return std::weak_order(lhs, rhs) == std::weak_ordering::equivalent;
+            }
+            else
+            {
+                // half_float::half has no std::weak_order, and every half converts exactly to a float.
+                return dictionary_floating_point_equal(static_cast<float>(lhs), static_cast<float>(rhs));
+            }
+        }
+
+        /**
          * Compares a dictionary entry with an owning value without materializing the entry when
          * the stored view and the owning value are directly comparable (e.g. string_view and
-         * std::string), so lookups do not copy the dictionary values.
+         * std::string), so lookups do not copy the dictionary values. Floating-point values are
+         * compared with dictionary_floating_point_equal.
          */
         inline bool
         dictionary_value_equal(const array_traits::const_reference& entry, const array_traits::value_type& value)
@@ -177,7 +200,15 @@ namespace sparrow
                     {
                         return false;
                     }
-                    if constexpr (requires { entry_value == *other; })
+                    if constexpr (requires {
+                                      dictionary_floating_point_equal(entry_value.get(), other->get());
+                                  })
+                    {
+                        return entry_value.has_value() == other->has_value()
+                               and (not other->has_value()
+                                    or dictionary_floating_point_equal(entry_value.get(), other->get()));
+                    }
+                    else if constexpr (requires { entry_value == *other; })
                     {
                         return static_cast<bool>(entry_value == *other);
                     }
@@ -222,7 +253,9 @@ namespace sparrow
      * with a fresh key. The keys buffer is then grown, which may reallocate it, and the validity
      * bitmap is extended. Because entries are only appended, the keys of the elements already
      * present do not change; insert(pos, value, count) encodes \p value once and duplicates the
-     * resulting key, while the range overloads encode each value.
+     * resulting key, while the range overloads encode each value. Floating-point values are
+     * compared with std::weak_order, so a NaN reuses the NaN already stored (all the NaNs of the
+     * same sign are equal) and +0.0 and -0.0 share one entry.
      *
      * @par Modifying (assignment through operator[])
      * The new value is encoded like an insertion, then the key and the validity bit of the element
