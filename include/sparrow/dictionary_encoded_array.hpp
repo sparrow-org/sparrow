@@ -369,7 +369,11 @@ namespace sparrow
          * dictionary update and compaction described there. Any mutation of the array invalidates
          * the proxy and the iterators obtained before it.
          *
-         * @throws std::logic_error if the array is not nullable.
+         * A non-nullable array can be read through the proxy but only accepts non-null values:
+         * assigning \ref nullval or a null \ref value_type throws std::invalid_argument. The
+         * validity flag of the proxy is written straight to the bitmap, so clearing it on a
+         * non-nullable array (\c dict[i].null_flag() = false, or assigning a null nullable) is not
+         * detected and must be avoided.
          *
          * @note Assigning a null nullable (\c dict[i] = make_nullable<T>(v, false)) runs the proxy
          * assignment with \c v, adding it to the dictionary if absent, and only then clears the
@@ -1454,12 +1458,6 @@ namespace sparrow
     auto dictionary_encoded_array<IT>::operator[](size_type i) -> reference
     {
         SPARROW_ASSERT_TRUE(i < size());
-        if (!is_nullable())
-        {
-            throw std::logic_error(
-                "dictionary_encoded_array::operator[]: mutable access requires a nullable array"
-            );
-        }
         auto& bitmap = detail::array_access::get_arrow_proxy(m_keys_layout).bitmap();
         SPARROW_ASSERT_TRUE(bitmap.has_value());
         return reference(dictionary_reference<IT>(this, i), (*bitmap)[i]);

@@ -816,7 +816,14 @@ namespace sparrow
                 primitive_array<std::int32_t> values{{1, 2}};
                 layout_type dict{layout_type::keys_buffer_type{0, 1}, array{std::move(values)}, false};
 
-                CHECK_THROWS_AS(dict[0] = make_nullable<std::int32_t>(5), std::logic_error);
+                // The mutable operator[] does not require a nullable array: only assigning a null
+                // value is rejected.
+                CHECK(dict[0].has_value());
+                CHECK_NULLABLE_VARIANT_EQ(layout_type::const_reference(dict[1].get()), std::int32_t(2));
+                CHECK_THROWS_AS(dict[0].get() = sparrow::nullval, std::invalid_argument);
+                CHECK_NOTHROW(dict[1] = make_nullable<std::int32_t>(3));
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[0], std::int32_t(1));
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[1], std::int32_t(3));
                 CHECK_THROWS_AS(dict.set_value(0, sparrow::nullval), std::invalid_argument);
                 CHECK_THROWS_AS(dict.push_back(nullable<std::int32_t>{}), std::invalid_argument);
                 CHECK_THROWS_AS(dict.resize(3), std::invalid_argument);

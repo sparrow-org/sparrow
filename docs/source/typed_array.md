@@ -346,8 +346,8 @@ dictionary, a child array of the unique values. A null element stores the key 0 
 bit cleared and never references a dictionary entry; any non-null key is a valid dictionary index.
 
 **Mutation:** `dictionary_encoded_array` is mutable and maintains its dictionary automatically. An
-array created as non-nullable only accepts non-null values: `set_value` rejects null values and the
-mutable `operator[]` is unavailable.
+array created as non-nullable only accepts non-null values: storing a null throws
+`std::invalid_argument`, and the validity flag of an element proxy must not be cleared.
 
 - **Inserting** (`insert`, `push_back`, growing `resize`): the value is encoded by a linear scan of
   the dictionary; an equal entry reuses its key, an absent value is appended at the end with a new
