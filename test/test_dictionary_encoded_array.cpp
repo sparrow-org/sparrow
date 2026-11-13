@@ -494,12 +494,12 @@ namespace sparrow
         }
 
 
-        TEST_CASE("set_value")
+        TEST_CASE("element_assignment")
         {
             SUBCASE("new value appends to the dictionary")
             {
                 layout_type dict = make_mutable_dictionary();
-                dict.set_value(3, layout_type::value_type{make_nullable<std::string>("d")});
+                dict[3].get() = layout_type::value_type{make_nullable<std::string>("d")};
                 REQUIRE_EQ(dict.size(), 4);
                 CHECK_EQ(dictionary_values_size(dict), 4);
                 CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[3], std::string_view("d"));
@@ -508,7 +508,7 @@ namespace sparrow
             SUBCASE("existing value reuses the dictionary entry")
             {
                 layout_type dict = make_mutable_dictionary();
-                dict.set_value(3, make_nullable<std::string>("c"));
+                dict[3] = make_nullable<std::string>("c");
                 REQUIRE_EQ(dict.size(), 4);
                 CHECK_EQ(dictionary_values_size(dict), 3);
                 CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[2], std::string_view("c"));
@@ -518,7 +518,7 @@ namespace sparrow
             SUBCASE("replacement compacts orphaned entries")
             {
                 layout_type dict = make_mutable_dictionary();
-                dict.set_value(1, make_nullable<std::string>("a"));
+                dict[1] = make_nullable<std::string>("a");
                 REQUIRE_EQ(dict.size(), 4);
                 CHECK_EQ(dictionary_values_size(dict), 2);
                 const auto& cdict = dict;
@@ -531,7 +531,7 @@ namespace sparrow
             SUBCASE("null replacement compacts orphaned entries")
             {
                 layout_type dict = make_mutable_dictionary();
-                dict.set_value(1, sparrow::nullval);
+                dict[1].get() = sparrow::nullval;
                 REQUIRE_EQ(dict.size(), 4);
                 CHECK_FALSE(std::as_const(dict)[1].has_value());
                 CHECK_EQ(dictionary_values_size(dict), 2);
@@ -542,7 +542,7 @@ namespace sparrow
             SUBCASE("null replacement does not append the value")
             {
                 layout_type dict = make_mutable_dictionary();
-                dict.set_value(0, make_nullable<std::string>("x", false));
+                dict[0].get() = layout_type::value_type{make_nullable<std::string>("x", false)};
                 CHECK_FALSE(std::as_const(dict)[0].has_value());
                 CHECK_EQ(dictionary_values_size(dict), 3);
             }
@@ -559,7 +559,7 @@ namespace sparrow
                 layout_type dict{layout_type::keys_buffer_type{0, 1, 2}, std::move(values_array), true};
                 CHECK_FALSE(std::as_const(dict)[1].has_value());
 
-                dict.set_value(1, make_nullable<std::string>("b"));
+                dict[1] = make_nullable<std::string>("b");
                 CHECK_EQ(dictionary_values_size(dict), 2);
                 CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[1], std::string_view("b"));
                 CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[2], std::string_view("b"));
@@ -758,7 +758,7 @@ namespace sparrow
                 CHECK_FALSE(std::as_const(dict)[0].has_value());
                 // "x" is appended by the proxy assignment and stays unreferenced until compaction.
                 CHECK_EQ(dictionary_values_size(dict), 4);
-                dict.set_value(1, make_nullable<std::string>("b"));
+                dict[1] = make_nullable<std::string>("b");
                 CHECK_EQ(dictionary_values_size(dict), 3);
             }
 
@@ -781,12 +781,12 @@ namespace sparrow
                 layout_type source = make_mutable_dictionary();
                 layout_type dict = source.slice_view(1, 3);
                 const layout_type::value_type value{make_nullable<std::string>("x")};
-                CHECK_THROWS_AS(dict.set_value(0, value), std::logic_error);
-                CHECK_THROWS_AS(dict.set_value(0, sparrow::nullval), std::logic_error);
                 // A sliced view has no mutable bitmap, so use a deep copy with a non-zero offset to
                 // exercise the proxy assignment path.
                 layout_type deep_sliced = source.slice(1, 3);
                 CHECK_THROWS_AS(deep_sliced[0] = make_nullable<std::string>("x"), std::logic_error);
+                CHECK_THROWS_AS(deep_sliced[0].get() = value, std::logic_error);
+                CHECK_THROWS_AS(deep_sliced[0].get() = sparrow::nullval, std::logic_error);
                 CHECK_THROWS_AS(dict.insert(dict.cbegin(), value), std::logic_error);
                 CHECK_THROWS_AS(dict.push_back(value), std::logic_error);
                 CHECK_THROWS_AS(dict.erase(dict.cbegin()), std::logic_error);
@@ -799,7 +799,7 @@ namespace sparrow
             {
                 primitive_array<std::int32_t> values{{1, 2}};
                 layout_type dict{layout_type::keys_buffer_type{0, 1}, array{std::move(values)}, true};
-                dict.set_value(0, make_nullable<std::int32_t>(5));
+                dict[0] = make_nullable<std::int32_t>(5);
                 CHECK_EQ(dictionary_values_size(dict), 2);
                 CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[0], std::int32_t(5));
                 CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[1], std::int32_t(2));
@@ -824,11 +824,10 @@ namespace sparrow
                 CHECK_NOTHROW(dict[1] = make_nullable<std::int32_t>(3));
                 CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[0], std::int32_t(1));
                 CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[1], std::int32_t(3));
-                CHECK_THROWS_AS(dict.set_value(0, sparrow::nullval), std::invalid_argument);
                 CHECK_THROWS_AS(dict.push_back(nullable<std::int32_t>{}), std::invalid_argument);
                 CHECK_THROWS_AS(dict.resize(3), std::invalid_argument);
 
-                CHECK_NOTHROW(dict.set_value(0, make_nullable<std::int32_t>(5)));
+                CHECK_NOTHROW(dict[0] = make_nullable<std::int32_t>(5));
                 CHECK_NOTHROW(dict.push_back(make_nullable<std::int32_t>(6)));
                 CHECK_EQ(dict.size(), 3);
                 CHECK_NULLABLE_VARIANT_EQ(std::as_const(dict)[0], std::int32_t(5));

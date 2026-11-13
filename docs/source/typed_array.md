@@ -355,7 +355,7 @@ array created as non-nullable only accepts non-null values: storing a null throw
   Entries are only appended, so the keys of the elements already present keep their index.
   `insert(pos, value, count)` encodes the value once and reuses that key for the copies, while the
   range overloads encode each value.
-- **Modifying** (`set_value`, assignment through `operator[]`): the new value is encoded like an
+- **Modifying** (assignment through `operator[]`): the new value is encoded like an
   insertion, the key and the validity bit are written in place, then the dictionary is compacted.
   If an entry lost its last reference, it is dropped, the dictionary child is replaced by a
   compacted copy, and every key is renumbered.
@@ -372,7 +372,8 @@ created from. Mutations are not supported on slices with a non-zero Arrow offset
 dictionary index that does not fit the key type throws `std::overflow_error`. Assigning a nullable
 whose value is null (for example `sp::make_nullable<std::string>("x", false)`) adds `"x"` to the
 dictionary before clearing the validity bit, so the entry stays unreferenced until the next
-compacting operation; assigning `sp::nullval`, or calling `set_value(i, sp::nullval)`, avoids it.
+compacting operation; assigning `sp::nullval` to the element proxy (`dict[i].get() = sp::nullval`)
+avoids it.
 
 #### run_end_encoded_array
 **Header:** `sparrow/run_end_encoded_array.hpp`

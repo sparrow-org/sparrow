@@ -224,15 +224,14 @@ namespace sparrow
      * present do not change; insert(pos, value, count) encodes \p value once and duplicates the
      * resulting key, while the range overloads encode each value.
      *
-     * @par Modifying (set_value, dictionary_reference assignment)
+     * @par Modifying (assignment through operator[])
      * The new value is encoded like an insertion, then the key and the validity bit of the element
      * are written in place and compact_dictionary runs: if at least one dictionary entry lost its
      * last reference, it is dropped, the dictionary child is replaced by a compacted copy, and
      * every key is rewritten to its new index. Keys are therefore only stable within one
      * operation. Assigning a null nullable adds its value to the dictionary before clearing the
-     * validity bit, so the just-added entry stays unreferenced until the next set_value, erase,
-     * pop_back or shrinking resize; set_value(index, nullval) and proxy assignment of nullval
-     * avoid it.
+     * validity bit, so the just-added entry stays unreferenced until the next assignment, erase,
+     * pop_back or shrinking resize; assigning nullval to the proxy avoids it.
      *
      * @par Deleting (erase, pop_back, shrinking resize)
      * Keys are removed from the keys buffer and compact_dictionary runs, renumbering the
@@ -365,9 +364,9 @@ namespace sparrow
          * @param i The index of the element to access.
          * @return Mutable reference to the element at the specified index.
          *
-         * The proxy is index based and writes through set_value, so assigning to it performs the
-         * dictionary update and compaction described there. Any mutation of the array invalidates
-         * the proxy and the iterators obtained before it.
+         * The proxy is index based: assigning to it performs the dictionary update and compaction
+         * described in the class documentation. Any mutation of the array invalidates the proxy
+         * and the iterators obtained before it.
          *
          * A non-nullable array can be read through the proxy but only accepts non-null values:
          * assigning \ref nullval or a null \ref value_type throws std::invalid_argument. The
@@ -378,10 +377,10 @@ namespace sparrow
          * @note Assigning a null nullable (\c dict[i] = make_nullable<T>(v, false)) runs the proxy
          * assignment with \c v, adding it to the dictionary if absent, and only then clears the
          * validity flag. The just-added entry can therefore stay unreferenced until the next
-         * \ref erase, \ref set_value, \ref pop_back or shrinking \ref resize. \ref set_value with
-         * \ref nullval and direct proxy assignment (\c dict[i].get() = nullval) avoid it.
-         * Assigning a null \ref value_type (\c dict[i] = value_type{nullable<T>{}}) marks the
-         * element valid: use one of the paths above instead.
+         * assignment, \ref erase, \ref pop_back or shrinking \ref resize. Direct proxy assignment
+         * of \ref nullval (\c dict[i].get() = nullval) avoids it. Assigning a null \ref value_type
+         * (\c dict[i] = value_type{nullable<T>{}}) marks the element valid: use direct proxy
+         * assignment (\c dict[i].get() = value) instead.
          */
         [[nodiscard]] reference operator[](size_type i);
 
@@ -454,65 +453,6 @@ namespace sparrow
          * @return Constant reference to the last element.
          */
         [[nodiscard]] SPARROW_CONSTEXPR_CLANG const_reference back() const;
-
-        /**
-         * Replaces the element at the given index.
-         *
-         * A value already present in the dictionary reuses its entry, a new value is appended to
-         * the dictionary values, and entries left without any reference are removed.
-         *
-         * The key and the validity bit of the element are written in place, then the dictionary is
-         * compacted: when an entry lost its last reference, the dictionary child is replaced and
-         * every key is renumbered. Element proxies and iterators obtained before the call are
-         * invalidated.
-         *
-         * @param index The index of the element to replace.
-         * @param value The new value.
-         *
-         * @pre \p index must be less than size().
-         * @pre The array must not be sliced (offset() == 0).
-         *
-         * @throws std::invalid_argument if \p value is null and the array is not nullable.
-         */
-        void set_value(size_type index, const value_type& value);
-
-        /**
-         * Replaces the element at the given index.
-         *
-         * The nullable is converted with to_value_type and handled like
-         * set_value(size_type, const value_type&): the value is encoded, the key and the validity
-         * bit are written, and the dictionary is compacted.
-         *
-         * @tparam T The nullable value type.
-         * @tparam B The nullable flag type.
-         * @param index The index of the element to replace.
-         * @param value The new value.
-         *
-         * @pre \p index must be less than size().
-         * @pre The array must not be sliced (offset() == 0).
-         *
-         * @throws std::invalid_argument if \p value is null and the array is not nullable.
-         */
-        template <class T, mpl::boolean_like B>
-            requires dictionary_assignable_nullable<T, B>
-        void set_value(size_type index, const nullable<T, B>& value);
-
-        /**
-         * Replaces the element at the given index with null.
-         *
-         * The validity bit is cleared and the key set to 0 without looking anything up in the
-         * dictionary, then the dictionary is compacted like any other replacement: entries that
-         * are no longer referenced are dropped and the remaining keys are renumbered.
-         *
-         * @param index The index of the element to replace.
-         * @param null_value The null sentinel.
-         *
-         * @pre \p index must be less than size().
-         * @pre The array must not be sliced (offset() == 0).
-         *
-         * @throws std::invalid_argument if the array is not nullable.
-         */
-        void set_value(size_type index, nullval_t null_value);
 
         /**
          * Inserts \p count copies of \p value before \p pos.
@@ -992,6 +932,67 @@ namespace sparrow
          */
         template <class T, mpl::boolean_like B>
         static value_type to_value_type(const nullable<T, B>& value);
+
+        /**
+         * Replaces the element at the given index.
+         *
+         * Called by dictionary_reference, the element proxy returned by operator[].
+         *
+         * A value already present in the dictionary reuses its entry, a new value is appended to
+         * the dictionary values, and entries left without any reference are removed.
+         *
+         * The key and the validity bit of the element are written in place, then the dictionary is
+         * compacted: when an entry lost its last reference, the dictionary child is replaced and
+         * every key is renumbered. Element proxies and iterators obtained before the call are
+         * invalidated.
+         *
+         * @param index The index of the element to replace.
+         * @param value The new value.
+         *
+         * @pre \p index must be less than size().
+         * @pre The array must not be sliced (offset() == 0).
+         *
+         * @throws std::invalid_argument if \p value is null and the array is not nullable.
+         */
+        void set_value(size_type index, const value_type& value);
+
+        /**
+         * Replaces the element at the given index.
+         *
+         * The nullable is converted with to_value_type and handled like
+         * set_value(size_type, const value_type&): the value is encoded, the key and the validity
+         * bit are written, and the dictionary is compacted.
+         *
+         * @tparam T The nullable value type.
+         * @tparam B The nullable flag type.
+         * @param index The index of the element to replace.
+         * @param value The new value.
+         *
+         * @pre \p index must be less than size().
+         * @pre The array must not be sliced (offset() == 0).
+         *
+         * @throws std::invalid_argument if \p value is null and the array is not nullable.
+         */
+        template <class T, mpl::boolean_like B>
+            requires dictionary_assignable_nullable<T, B>
+        void set_value(size_type index, const nullable<T, B>& value);
+
+        /**
+         * Replaces the element at the given index with null.
+         *
+         * The validity bit is cleared and the key set to 0 without looking anything up in the
+         * dictionary, then the dictionary is compacted like any other replacement: entries that
+         * are no longer referenced are dropped and the remaining keys are renumbered.
+         *
+         * @param index The index of the element to replace.
+         * @param null_value The null sentinel.
+         *
+         * @pre \p index must be less than size().
+         * @pre The array must not be sliced (offset() == 0).
+         *
+         * @throws std::invalid_argument if the array is not nullable.
+         */
+        void set_value(size_type index, nullval_t null_value);
 
         /**
          * Encodes a value into a dictionary key, appending the value to the dictionary if needed.
