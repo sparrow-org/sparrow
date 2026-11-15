@@ -22,6 +22,17 @@ namespace sparrow
 {
     TEST_SUITE("bit")
     {
+        TEST_CASE("is_bit_set")
+        {
+            constexpr std::uint8_t bits[] = {0b1000'0010u, 0b0000'0001u};
+            CHECK_FALSE(is_bit_set(bits, 0));
+            CHECK(is_bit_set(bits, 1));
+            CHECK_FALSE(is_bit_set(bits, 2));
+            CHECK(is_bit_set(bits, 7));
+            CHECK(is_bit_set(bits, 8));
+            CHECK_FALSE(is_bit_set(bits, 9));
+        }
+
         TEST_CASE("byteswap")
         {
             SUBCASE("uint8_t")
