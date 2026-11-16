@@ -14,6 +14,7 @@
 
 #include <array>
 #include <tuple>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -39,10 +40,10 @@ namespace sparrow
                     static_assert(std::is_same_v<array_type, sparrow::dictionary_encoded_array<std::uint64_t>>);
 
                     REQUIRE_EQ(arr.size(), 4);
-                    CHECK_NULLABLE_VARIANT_EQ(arr[0], 1);
-                    CHECK_NULLABLE_VARIANT_EQ(arr[1], 1);
-                    CHECK_NULLABLE_VARIANT_EQ(arr[2], 1);
-                    CHECK_NULLABLE_VARIANT_EQ(arr[3], 2);
+                    CHECK_NULLABLE_VARIANT_EQ(std::as_const(arr)[0], 1);
+                    CHECK_NULLABLE_VARIANT_EQ(std::as_const(arr)[1], 1);
+                    CHECK_NULLABLE_VARIANT_EQ(std::as_const(arr)[2], 1);
+                    CHECK_NULLABLE_VARIANT_EQ(std::as_const(arr)[3], 2);
                 }
 
                 SUBCASE("with-nulls")
@@ -56,10 +57,10 @@ namespace sparrow
                     using array_type = std::decay_t<decltype(arr)>;
                     static_assert(std::is_same_v<array_type, sparrow::dictionary_encoded_array<std::uint64_t>>);
                     REQUIRE_EQ(arr.size(), 4);
-                    CHECK_NULLABLE_VARIANT_EQ(arr[0], 1);
-                    CHECK_NULLABLE_VARIANT_EQ(arr[1], 1);
-                    CHECK(!arr[2].has_value());
-                    CHECK_NULLABLE_VARIANT_EQ(arr[3], 2);
+                    CHECK_NULLABLE_VARIANT_EQ(std::as_const(arr)[0], 1);
+                    CHECK_NULLABLE_VARIANT_EQ(std::as_const(arr)[1], 1);
+                    CHECK(!std::as_const(arr)[2].has_value());
+                    CHECK_NULLABLE_VARIANT_EQ(std::as_const(arr)[3], 2);
                 }
             }
             SUBCASE("dict[string]")
@@ -73,11 +74,11 @@ namespace sparrow
                 static_assert(std::is_same_v<array_type, sparrow::dictionary_encoded_array<std::uint64_t>>);
 
                 REQUIRE_EQ(arr.size(), 5);
-                CHECK_NULLABLE_VARIANT_EQ(arr[0], std::string_view("hello"));
-                CHECK_NULLABLE_VARIANT_EQ(arr[1], std::string_view("world"));
-                CHECK_NULLABLE_VARIANT_EQ(arr[2], std::string_view("hello"));
-                CHECK_NULLABLE_VARIANT_EQ(arr[3], std::string_view("world"));
-                CHECK(!arr[4].has_value());
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(arr)[0], std::string_view("hello"));
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(arr)[1], std::string_view("world"));
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(arr)[2], std::string_view("hello"));
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(arr)[3], std::string_view("world"));
+                CHECK(!std::as_const(arr)[4].has_value());
             }
             SUBCASE("dict[struct[int,float]]")
             {
@@ -103,23 +104,23 @@ namespace sparrow
                 REQUIRE_EQ(arr.size(), 4);
 
                 // 0
-                auto arr0 = std::get<nullable<struct_value>>(arr[0]);
+                auto arr0 = std::get<nullable<struct_value>>(std::as_const(arr)[0]);
                 REQUIRE(arr0.has_value());
                 CHECK_NULLABLE_VARIANT_EQ(arr0.value()[0], int(1));
                 CHECK_NULLABLE_VARIANT_EQ(arr0.value()[1], std::uint16_t(1));
 
                 // 1
-                auto arr1 = std::get<nullable<struct_value>>(arr[1]);
+                auto arr1 = std::get<nullable<struct_value>>(std::as_const(arr)[1]);
                 REQUIRE(!arr1.has_value());
 
                 // 2
-                auto arr2 = std::get<nullable<struct_value>>(arr[2]);
+                auto arr2 = std::get<nullable<struct_value>>(std::as_const(arr)[2]);
                 REQUIRE(arr2.has_value());
                 CHECK(!arr2.value()[0].has_value());
                 CHECK_NULLABLE_VARIANT_EQ(arr2.value()[1], std::uint16_t(42));
 
                 // 3
-                auto arr3 = std::get<nullable<struct_value>>(arr[3]);
+                auto arr3 = std::get<nullable<struct_value>>(std::as_const(arr)[3]);
                 REQUIRE(arr3.has_value());
                 CHECK(!arr3.value()[0].has_value());
                 CHECK_NULLABLE_VARIANT_EQ(arr3.value()[1], std::uint16_t(42));
@@ -133,10 +134,10 @@ namespace sparrow
                 static_assert(std::is_same_v<array_type, sparrow::dictionary_encoded_array<std::uint64_t>>);
 
                 REQUIRE_EQ(arr.size(), 2);
-                CHECK_EQ(std::get<nullable<list_value>>(arr[0]).value().size(), 3);
-                CHECK_NULLABLE_VARIANT_EQ(std::get<nullable<list_value>>(arr[0]).value()[0], 1);
-                CHECK_NULLABLE_VARIANT_EQ(std::get<nullable<list_value>>(arr[0]).value()[1], 2);
-                CHECK_NULLABLE_VARIANT_EQ(std::get<nullable<list_value>>(arr[0]).value()[2], 3);
+                CHECK_EQ(std::get<nullable<list_value>>(std::as_const(arr)[0]).value().size(), 3);
+                CHECK_NULLABLE_VARIANT_EQ(std::get<nullable<list_value>>(std::as_const(arr)[0]).value()[0], 1);
+                CHECK_NULLABLE_VARIANT_EQ(std::get<nullable<list_value>>(std::as_const(arr)[0]).value()[1], 2);
+                CHECK_NULLABLE_VARIANT_EQ(std::get<nullable<list_value>>(std::as_const(arr)[0]).value()[2], 3);
             }
             SUBCASE("dict[union[int, string]]")
             {
@@ -154,10 +155,10 @@ namespace sparrow
                 static_assert(std::is_same_v<array_type, sparrow::dictionary_encoded_array<std::uint64_t>>);
 
                 REQUIRE_EQ(arr.size(), 4);
-                CHECK_NULLABLE_VARIANT_EQ(arr[0], 1);
-                CHECK_NULLABLE_VARIANT_EQ(arr[1], std::string_view("hello"));
-                CHECK_NULLABLE_VARIANT_EQ(arr[2], 2);
-                CHECK_NULLABLE_VARIANT_EQ(arr[3], std::string_view("world"));
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(arr)[0], 1);
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(arr)[1], std::string_view("hello"));
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(arr)[2], 2);
+                CHECK_NULLABLE_VARIANT_EQ(std::as_const(arr)[3], std::string_view("world"));
             }
 
             SUBCASE("list[dict[int]]")

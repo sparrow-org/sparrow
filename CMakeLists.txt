@@ -319,6 +319,7 @@ set(SPARROW_HEADERS
     ${SPARROW_INCLUDE_DIR}/sparrow/date_array.hpp
     ${SPARROW_INCLUDE_DIR}/sparrow/decimal_array.hpp
     ${SPARROW_INCLUDE_DIR}/sparrow/dictionary_encoded_array.hpp
+    ${SPARROW_INCLUDE_DIR}/sparrow/dictionary_reference.hpp
     ${SPARROW_INCLUDE_DIR}/sparrow/duration_array.hpp
     ${SPARROW_INCLUDE_DIR}/sparrow/fixed_width_binary_array.hpp
     ${SPARROW_INCLUDE_DIR}/sparrow/list_array.hpp
