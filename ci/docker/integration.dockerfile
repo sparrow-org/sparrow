@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-FROM apache/arrow-dev:amd64-conda-integration
+FROM apache/arrow-dev:amd64-conda-integration@sha256:a153e3b97af6897cfdc623815fbeee47e448c19855806334f40dab75b56e8641
 
 ENV ARROW_USE_CCACHE=OFF \
     ARROW_CPP_EXE_PATH=/build/cpp/debug \
