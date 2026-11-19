@@ -328,6 +328,7 @@ set(SPARROW_HEADERS
     ${SPARROW_INCLUDE_DIR}/sparrow/record_batch.hpp
     ${SPARROW_INCLUDE_DIR}/sparrow/run_end_encoded_array.hpp
     ${SPARROW_INCLUDE_DIR}/sparrow/struct_array.hpp
+    ${SPARROW_INCLUDE_DIR}/sparrow/struct_reference.hpp
     ${SPARROW_INCLUDE_DIR}/sparrow/time_array.hpp
     ${SPARROW_INCLUDE_DIR}/sparrow/timestamp_array.hpp
     ${SPARROW_INCLUDE_DIR}/sparrow/timestamp_without_timezone_array.hpp
@@ -364,6 +365,7 @@ set(SPARROW_SRC
     ${SPARROW_SOURCE_DIR}/record_batch.cpp
     ${SPARROW_SOURCE_DIR}/run_end_encoded_array.cpp
     ${SPARROW_SOURCE_DIR}/struct_array.cpp
+    ${SPARROW_SOURCE_DIR}/struct_reference.cpp
     ${SPARROW_SOURCE_DIR}/types/data_type.cpp
     ${SPARROW_SOURCE_DIR}/union_array.cpp
     ${SPARROW_SOURCE_DIR}/utils/metadata.cpp

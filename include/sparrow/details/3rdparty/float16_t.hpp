@@ -746,7 +746,7 @@ namespace half_float {
 			if(builtin_isinf(value))
 				return hbits | 0x7C00;
 			int exp;
-			std::frexp(value, &exp);
+			static_cast<void>(std::frexp(value, &exp));  // only exp is used
 			if(exp > 16)
 				return overflow<R>(hbits);
 			if(exp < -13)

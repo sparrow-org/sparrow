@@ -33,6 +33,7 @@
 #include "sparrow/layout/array_wrapper.hpp"
 #include "sparrow/layout/layout_utils.hpp"
 #include "sparrow/layout/nested_value_types.hpp"
+#include "sparrow/struct_reference.hpp"
 #include "sparrow/utils/functor_index_iterator.hpp"
 #include "sparrow/utils/memory.hpp"
 #include "sparrow/utils/nullable.hpp"
@@ -40,6 +41,7 @@
 namespace sparrow
 {
     class struct_array;
+    class struct_reference;
 
     namespace detail
     {
@@ -58,11 +60,11 @@ namespace sparrow
     {
         using array_type = struct_array;
         using inner_value_type = struct_value;
-        using inner_reference = struct_value;
+        using inner_reference = struct_reference;
         using inner_const_reference = struct_value;
-        using value_iterator = functor_index_iterator<detail::layout_value_functor<array_type, inner_value_type>>;
+        using value_iterator = functor_index_iterator<detail::layout_value_functor<array_type, inner_reference>>;
         using const_value_iterator = functor_index_iterator<
-            detail::layout_value_functor<const array_type, inner_value_type>>;
+            detail::layout_value_functor<const array_type, inner_const_reference>>;
         using iterator_tag = std::random_access_iterator_tag;
     };
 
@@ -139,7 +141,7 @@ namespace sparrow
         using const_bitmap_range = base_type::const_bitmap_range;
 
         using inner_value_type = struct_value;
-        using inner_reference = struct_value;
+        using inner_reference = struct_reference;
         using inner_const_reference = struct_value;
 
         using value_type = nullable<inner_value_type>;
@@ -151,6 +153,20 @@ namespace sparrow
         using base_type::insert;
         using base_type::push_back;
         using base_type::resize;
+
+        /**
+         * @brief Replaces the fields of the struct at \p index with the fields of \p value.
+         *
+         * In-place element assignment through \ref struct_reference forwards to this method.
+         *
+         * @param index Index of the struct to replace
+         * @param value Struct whose fields are copied
+         *
+         * @pre \p index must be < size()
+         * @throws std::logic_error if the array has a non-zero Arrow offset
+         * @throws std::invalid_argument if \p value has an incompatible number of fields
+         */
+        SPARROW_API void set_value(size_type index, const struct_value& value);
 
         /**
          * @brief Constructs struct array from Arrow proxy.
@@ -491,6 +507,18 @@ namespace sparrow
     private:
 
         /**
+         * @brief Validates \p value and converts it to one owning value per child array.
+         *
+         * @param value The struct value to convert.
+         * @param operation The operation name used in error messages.
+         * @return One value per child array.
+         *
+         * @throws std::invalid_argument if \p value has an incompatible number of fields.
+         */
+        [[nodiscard]] SPARROW_API std::vector<array_traits::value_type>
+        make_child_values(const struct_value& value, const char* operation) const;
+
+        /**
          * @brief Rebuilds every child array from its current values and updates the length.
          *
          * Each child is snapshotted value-by-value, transformed by \p transform, then
@@ -530,8 +558,11 @@ namespace sparrow
         friend class mutable_array_base<self_type>;
 
         // needs access to this->value(i)
-        friend class detail::layout_value_functor<self_type, inner_value_type>;
-        friend class detail::layout_value_functor<const self_type, inner_value_type>;
+        friend class detail::layout_value_functor<self_type, inner_reference>;
+        friend class detail::layout_value_functor<const self_type, inner_const_reference>;
+
+        // needs access to this->value(i)
+        friend class struct_reference;
     };
 
     template <std::ranges::input_range CHILDREN_RANGE, validity_bitmap_input VB, input_metadata_container METADATA_RANGE>
@@ -684,7 +715,6 @@ namespace sparrow
 }
 
 #if defined(__cpp_lib_format)
-
 
 template <>
 struct std::formatter<sparrow::struct_array>

@@ -66,6 +66,48 @@ namespace sparrow
      */
     SPARROW_API void insert_element(array& destination, std::size_t pos, const array_traits::value_type& value);
 
+    /**
+     * Assigns one type-erased value to an existing position of a dynamically typed array.
+     *
+     * Unlike insert_element, the length does not change: the value is written through the
+     * buffers the array already exposes, so no child array is rebuilt.
+     *
+     * The value type must exactly match the destination array value type.
+     *
+     * @param destination The array to write into.
+     * @param pos The position of the element to replace.
+     * @param value The value to assign.
+     *
+     * @throws std::invalid_argument If the value type does not match the destination value type.
+     * @throws std::runtime_error If the destination does not support in-place element assignment.
+     */
+    SPARROW_API void set_element(array& destination, std::size_t pos, const array_traits::value_type& value);
+
+    /**
+     * Checks whether a dynamically typed array can be written in place with set_element.
+     *
+     * Callers that must not partially update a group of arrays should query this first and
+     * fall back to a full rebuild when it returns false.
+     *
+     * @param destination The array to check.
+     * @return true if an element can be assigned in place.
+     */
+    [[nodiscard]] SPARROW_API bool supports_element_assignment(const array& destination);
+
+    /**
+     * Checks whether set_element would accept value for destination without throwing on a type
+     * mismatch.
+     *
+     * Callers that write several arrays as one logical element use this to validate everything
+     * before writing anything, so a mid-way failure cannot leave them partially updated.
+     *
+     * @param destination The array to check.
+     * @param value The value that would be assigned.
+     * @return true if set_element would accept value.
+     */
+    [[nodiscard]] SPARROW_API bool
+    element_assignment_accepts(const array& destination, const array_traits::value_type& value);
+
     [[nodiscard]] SPARROW_API array
     array_make_from_element(const array_traits::value_type& value);
 

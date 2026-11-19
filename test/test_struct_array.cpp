@@ -12,12 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string_view>
 
 #include "sparrow/array.hpp"
+#include "sparrow/layout/array_helper.hpp"
+#include "sparrow/map_array.hpp"
 #include "sparrow/primitive_array.hpp"
 #include "sparrow/struct_array.hpp"
+#include "sparrow/variable_size_binary_array.hpp"
 
 #include "../test/external_array_data_creation.hpp"
 #include "doctest/doctest.h"
@@ -208,7 +213,10 @@ namespace sparrow
 
                 arr.insert(arr.cbegin() + 1, make_nullable(struct_value{}), 0);
                 arr.insert(arr.cbegin() + 1, empty_values.cbegin(), empty_values.cend());
+                // erase of an empty range returns the position without touching the array.
+                const std::size_t size_before_empty_erase = arr.size();
                 arr.erase(arr.cbegin() + 1, arr.cbegin() + 1);
+                CHECK_EQ(arr.size(), size_before_empty_erase);
 
                 CHECK_EQ(arr.size(), original_size);
             }
@@ -223,6 +231,8 @@ namespace sparrow
                     std::logic_error
                 );
                 CHECK_THROWS_AS(sliced.erase(sliced.cbegin()), std::logic_error);
+                CHECK_THROWS_AS(sliced.set_value(0, source[0].value()), std::logic_error);
+                CHECK_THROWS_AS(sliced[0].value() = source[0].value(), std::logic_error);
             }
 
             SUBCASE("rejects an incompatible field count")
@@ -237,8 +247,402 @@ namespace sparrow
                     std::invalid_argument
                 );
             }
+
+            SUBCASE("a failing field leaves the record unchanged")
+            {
+                // Two fields whose types differ, plus a donor whose second field is a string:
+                // the mismatch is only detected on the second field, so a naive loop would
+                // already have written the first. The pre-flight check must prevent that.
+                std::vector<nullable<std::int32_t>> first{std::int32_t(11)};
+                std::vector<nullable<std::int64_t>> second{std::int64_t(22)};
+                struct_array arr(
+                    std::vector<array>{
+                        array(primitive_array<std::int32_t>(std::move(first))),
+                        array(primitive_array<std::int64_t>(std::move(second))),
+                    }
+                );
+
+                std::vector<nullable<std::int32_t>> donor_first{std::int32_t(99)};
+                std::vector<nullable<std::string>> donor_second{std::string("mismatch")};
+                struct_array donor(
+                    std::vector<array>{
+                        array(primitive_array<std::int32_t>(std::move(donor_first))),
+                        array(string_array(std::move(donor_second))),
+                    }
+                );
+
+                CHECK_THROWS_AS(arr.set_value(0, donor[0].value()), std::invalid_argument);
+                // Neither field may have been written.
+                CHECK_NULLABLE_VARIANT_EQ(arr[0].value()[0], std::int32_t(11));
+                CHECK_NULLABLE_VARIANT_EQ(arr[0].value()[1], std::int64_t(22));
+            }
+
+            SUBCASE("a default-constructed struct_value assigns field defaults, not null")
+            {
+                struct_array arr(test::make_struct_proxy<std::int32_t, std::uint8_t>(2));
+                arr[0] = struct_value{};
+                // The element stays valid: the fields take their type defaults.
+                REQUIRE(arr[0].has_value());
+                CHECK_NULLABLE_VARIANT_EQ(arr[0].value()[0], std::int32_t(0));
+                CHECK_NULLABLE_VARIANT_EQ(arr[0].value()[1], std::uint8_t(0));
+            }
+
+            SUBCASE("a map child does not claim in-place assignment")
+            {
+                // map_array::operator[] yields nullable<map_value> by value and map_value is a
+                // non-owning view, so writing through it would be silently lost. It must not be
+                // reported as writable in place.
+                map_array map_child(
+                    array(primitive_array<std::int32_t>(std::vector<nullable<std::int32_t>>{std::int32_t(1)})),
+                    array(primitive_array<std::int32_t>(std::vector<nullable<std::int32_t>>{std::int32_t(2)})),
+                    map_array::offset_from_sizes(std::vector<std::size_t>{1})
+                );
+                CHECK_FALSE(supports_element_assignment(array(&map_child)));
+            }
+
+            SUBCASE("in-place element assignment")
+            {
+                struct_array arr(test::make_struct_proxy<std::int32_t, std::uint8_t>(3));
+
+                // Assigning a reference from the same array.
+                arr[0] = arr[1];
+                REQUIRE(arr[0].has_value());
+                CHECK_NULLABLE_VARIANT_EQ(arr[0].value()[0], std::int32_t(1));
+                CHECK_NULLABLE_VARIANT_EQ(arr[0].value()[1], std::uint8_t(1));
+                CHECK_EQ(arr.size(), 3);
+                CHECK_EQ(arr.raw_child(0)->get_arrow_proxy().length(), 3);
+                CHECK_EQ(arr.raw_child(1)->get_arrow_proxy().length(), 3);
+
+                // Assigning a value from another array.
+                struct_array source(test::make_struct_proxy<std::int32_t, std::uint8_t>(3));
+                arr[2] = source[2];
+                CHECK_NULLABLE_VARIANT_EQ(arr[2].value()[0], std::int32_t(2));
+                CHECK_NULLABLE_VARIANT_EQ(arr[2].value()[1], std::uint8_t(2));
+
+                // Assigning null through the proxy and assigning a value again.
+                arr[1] = nullval;
+                CHECK_FALSE(arr[1].has_value());
+                arr[1] = arr[0];
+                CHECK(arr[1].has_value());
+                CHECK_NULLABLE_VARIANT_EQ(arr[1].value()[0], std::int32_t(1));
+
+                // Assigning a null struct value keeps the element null.
+                arr[0] = make_nullable(struct_value{}, false);
+                CHECK_FALSE(arr[0].has_value());
+            }
+
+            SUBCASE("assignment writes the children in place")
+            {
+                struct_array arr(test::make_struct_proxy<std::int32_t, std::uint8_t>(4));
+
+                // The value of one element changes: the children must keep their buffers rather
+                // than be rebuilt, which is what an O(size) implementation does. Comparing the
+                // child data pointers pins that: a rebuild installs fresh buffers.
+                const std::int32_t*
+                    child_0_before = arr.raw_child(0)->get_arrow_proxy().buffers()[1].data<std::int32_t>();
+                const std::uint8_t*
+                    child_1_before = arr.raw_child(1)->get_arrow_proxy().buffers()[1].data<std::uint8_t>();
+
+                arr[2] = arr[0];
+
+                CHECK_EQ(arr.raw_child(0)->get_arrow_proxy().buffers()[1].data<std::int32_t>(), child_0_before);
+                CHECK_EQ(arr.raw_child(1)->get_arrow_proxy().buffers()[1].data<std::uint8_t>(), child_1_before);
+                CHECK_NULLABLE_VARIANT_EQ(arr[2].value()[0], std::int32_t(0));
+                CHECK_NULLABLE_VARIANT_EQ(arr[2].value()[1], std::uint8_t(0));
+
+                // Only the assigned element changed in each child.
+                CHECK_NULLABLE_VARIANT_EQ(arr[0].value()[0], std::int32_t(0));
+                CHECK_NULLABLE_VARIANT_EQ(arr[1].value()[0], std::int32_t(1));
+                CHECK_NULLABLE_VARIANT_EQ(arr[3].value()[0], std::int32_t(3));
+            }
+
+            SUBCASE("assignment refreshes a child whose buffers are replaced")
+            {
+                // A string child replaces its data buffer when the assigned string does not fit:
+                // the assignment must leave the other elements readable and unchanged.
+                std::vector<array> children;
+                children.emplace_back(string_array{std::vector<nullable<std::string>>{"a", "bb", "ccc"}});
+                children.emplace_back(primitive_array<std::int64_t>{std::vector<std::int64_t>{1, 2, 3}});
+                struct_array arr{children};
+
+                // Three elements: the child reallocates while the array holds several elements,
+                // which is where the stale per-element views become visible.
+                const std::string long_value(200, 'y');
+                std::vector<array> wide_children;
+                wide_children.emplace_back(
+                    string_array{std::vector<nullable<std::string>>{long_value, long_value, long_value}}
+                );
+                wide_children.emplace_back(primitive_array<std::int64_t>{std::vector<std::int64_t>{7, 8, 9}});
+                struct_array wide{wide_children};
+
+                // Read every element before the assignment, as a user iterating the array would.
+                for (std::size_t r = 0; r < arr.size(); ++r)
+                {
+                    (void) arr[r].value()[0];
+                    (void) arr[r].value()[1];
+                }
+
+                arr[1] = wide[1];
+
+                const auto assigned = std::get<nullable<std::string_view>>(arr[1].value()[0]).value();
+                CHECK_EQ(assigned.size(), long_value.size());
+
+                // The elements that were not assigned must still read their original values.
+                CHECK_EQ(std::get<nullable<std::string_view>>(arr[0].value()[0]).value(), std::string_view("a"));
+                CHECK_EQ(std::get<nullable<std::string_view>>(arr[2].value()[0]).value(), std::string_view("ccc"));
+                CHECK_NULLABLE_VARIANT_EQ(arr[0].value()[1], std::int64_t(1));
+                CHECK_NULLABLE_VARIANT_EQ(arr[2].value()[1], std::int64_t(3));
+            }
+
+            SUBCASE("assignment works for a nested struct child")
+            {
+                // A nested struct child cannot be rebuilt from its elements (array_make_from_element
+                // rejects nested values), so this only works through the in-place path.
+                const auto make = []
+                {
+                    std::vector<array> grand_children;
+                    grand_children.push_back(
+                        array(primitive_array<std::int64_t>{std::vector<std::int64_t>{10, 20, 30}})
+                    );
+                    std::vector<array> children;
+                    children.push_back(array(struct_array{grand_children}));
+                    return struct_array{children};
+                };
+
+                struct_array arr = make();
+                for (std::size_t r = 0; r < arr.size(); ++r)
+                {
+                    (void) arr[r].value()[0];
+                }
+
+                arr[1] = arr[2];
+
+                // The child of the nested struct holds the primitive value.
+                const auto nested = std::get<nullable<struct_value>>(arr[1].value()[0]);
+                REQUIRE(nested.has_value());
+                CHECK_NULLABLE_VARIANT_EQ(nested.value()[0], std::int64_t(30));
+                for (std::size_t r = 0; r < arr.size(); ++r)
+                {
+                    (void) arr[r].value()[0];
+                }
+            }
+
+            SUBCASE("a child that cannot be written in place takes the rebuild fallback")
+            {
+                // decimal_array is deliberately excluded from the in-place path (its element
+                // assignment does not compile with MSVC for int128_t / int256_t), so a struct
+                // holding one must still assign correctly through rebuild_children.
+                const auto make = []
+                {
+                    std::vector<array> children;
+                    children.push_back(array(primitive_array<std::int64_t>{std::vector<std::int64_t>{1, 2, 3}}));
+                    children.push_back(array(
+                        decimal_array<decimal<std::int32_t>>{std::vector<std::int32_t>{10, 20, 30}, std::size_t(2), 0}
+                    ));
+                    return struct_array{children};
+                };
+
+                struct_array arr = make();
+
+                // The decimal child cannot be written in place, so this assignment goes through
+                // the rebuild fallback: the result must still be correct.
+                arr[0] = arr[2];
+
+                CHECK_NULLABLE_VARIANT_EQ(arr[0].value()[0], std::int64_t(3));
+                CHECK_NULLABLE_VARIANT_EQ(arr[1].value()[0], std::int64_t(2));
+                CHECK_EQ(arr.size(), 3);
+            }
+
+            SUBCASE("non-const iteration yields mutable proxies")
+            {
+                struct_array arr(test::make_struct_proxy<std::int32_t, std::uint8_t>(3));
+                std::int32_t expected = 0;
+                for (auto element : arr)
+                {
+                    REQUIRE(element.has_value());
+                    CHECK_NULLABLE_VARIANT_EQ(element.value()[0], expected);
+                    ++expected;
+                }
+                CHECK_EQ(expected, 3);
+
+                auto it = arr.begin();
+                *it = arr[1];
+                CHECK_NULLABLE_VARIANT_EQ(arr[0].value()[0], std::int32_t(1));
+                CHECK_NULLABLE_VARIANT_EQ(arr[0].value()[1], std::uint8_t(1));
+            }
+
+            SUBCASE("in-place assignment rejects an incompatible field count")
+            {
+                struct_array arr(test::make_struct_proxy<std::int32_t, std::uint8_t>(3));
+                struct_array incompatible(
+                    std::vector<array>{array(primitive_array<std::int32_t>{std::vector<std::int32_t>{1}})}
+                );
+                CHECK_THROWS_AS(arr.set_value(0, incompatible[0].value()), std::invalid_argument);
+                CHECK_THROWS_AS(arr[0] = incompatible[0], std::invalid_argument);
+            }
         }
     };
+
+    TEST_CASE("struct_reference")
+    {
+        // Two children named "item 0" and "item 1", values 0..n-1 in each (see make_struct_proxy).
+        const auto make = []
+        {
+            return struct_array(test::make_struct_proxy<std::int32_t, std::uint8_t>(3));
+        };
+
+        SUBCASE("size and empty")
+        {
+            struct_array arr = make();
+            auto reference = arr[0].value();
+            CHECK_EQ(reference.size(), 2);
+            CHECK_FALSE(reference.empty());
+
+            // A struct with zero children is the empty record: size() is 0 and empty() is true.
+            // struct_array itself requires at least one child, so this is checked on the value.
+            const struct_value empty_value{};
+            CHECK_EQ(empty_value.size(), 0);
+            CHECK(empty_value.empty());
+        }
+
+        SUBCASE("element access")
+        {
+            struct_array arr = make();
+            auto reference = arr[1].value();
+
+            CHECK_NULLABLE_VARIANT_EQ(reference[0], std::int32_t(1));
+            CHECK_NULLABLE_VARIANT_EQ(reference[1], std::uint8_t(1));
+
+            CHECK_NULLABLE_VARIANT_EQ(reference.at(0), std::int32_t(1));
+            CHECK_THROWS_AS(reference.at(2), std::out_of_range);
+
+            CHECK_NULLABLE_VARIANT_EQ(reference.at("item 0"), std::int32_t(1));
+            CHECK_THROWS_AS(reference.at("missing"), std::out_of_range);
+
+            CHECK_NULLABLE_VARIANT_EQ(reference.front(), std::int32_t(1));
+            CHECK_NULLABLE_VARIANT_EQ(reference.back(), std::uint8_t(1));
+        }
+
+        SUBCASE("forward iteration")
+        {
+            struct_array arr = make();
+            auto reference = arr[2].value();
+
+            std::vector<array_traits::value_type> forward(reference.begin(), reference.end());
+            REQUIRE_EQ(forward.size(), 2);
+            CHECK_NULLABLE_VARIANT_EQ(forward[0], std::int32_t(2));
+            CHECK_NULLABLE_VARIANT_EQ(forward[1], std::uint8_t(2));
+
+            std::vector<array_traits::value_type> const_forward(reference.cbegin(), reference.cend());
+            CHECK_EQ(forward, const_forward);
+        }
+
+        SUBCASE("reverse iteration")
+        {
+            struct_array arr = make();
+            auto reference = arr[2].value();
+
+            std::vector<array_traits::value_type> reverse(reference.rbegin(), reference.rend());
+            REQUIRE_EQ(reverse.size(), 2);
+            // Reversed: the last child comes first.
+            CHECK_NULLABLE_VARIANT_EQ(reverse[0], std::uint8_t(2));
+            CHECK_NULLABLE_VARIANT_EQ(reverse[1], std::int32_t(2));
+
+            std::vector<array_traits::value_type> const_reverse(reference.crbegin(), reference.crend());
+            CHECK_EQ(reverse, const_reverse);
+        }
+
+        SUBCASE("names")
+        {
+            struct_array arr = make();
+            auto reference = arr[0].value();
+
+            // names() yields the child names as optional string views.
+            std::vector<std::optional<std::string_view>> collected;
+            for (const auto& name : reference.names())
+            {
+                collected.push_back(name);
+            }
+            REQUIRE_EQ(collected.size(), 2);
+            REQUIRE(collected[0].has_value());
+            REQUIRE(collected[1].has_value());
+            CHECK_EQ(*collected[0], std::string_view("item 0"));
+            CHECK_EQ(*collected[1], std::string_view("item 1"));
+        }
+
+        SUBCASE("conversion to struct_value")
+        {
+            struct_array arr = make();
+            auto reference = arr[1].value();
+
+            const struct_value value = static_cast<struct_value>(reference);
+            CHECK_EQ(value.size(), 2);
+            CHECK_NULLABLE_VARIANT_EQ(value[0], std::int32_t(1));
+            CHECK_NULLABLE_VARIANT_EQ(value[1], std::uint8_t(1));
+            // The reference reads the same record as the value it converts to.
+            CHECK(reference == value);
+        }
+
+        SUBCASE("equality")
+        {
+            struct_array arr = make();
+
+            // Same element: equal.
+            CHECK(arr[1].value() == arr[1].value());
+            CHECK(arr[1].value() == static_cast<struct_value>(arr[1].value()));
+
+            // Different elements of the same array: different records.
+            CHECK_FALSE(arr[0].value() == arr[1].value());
+
+            // The same values in another array are equal.
+            struct_array other = make();
+            CHECK(arr[1].value() == other[1].value());
+            CHECK(arr[1].value() == static_cast<struct_value>(other[1].value()));
+        }
+
+        SUBCASE("assignment through the reference")
+        {
+            struct_array arr = make();
+
+            // From a struct_value.
+            arr[0].value() = static_cast<struct_value>(arr[2].value());
+            CHECK_NULLABLE_VARIANT_EQ(arr[0].value()[0], std::int32_t(2));
+            CHECK_NULLABLE_VARIANT_EQ(arr[0].value()[1], std::uint8_t(2));
+
+            // From another reference (copy assignment).
+            arr[1].value() = arr[0].value();
+            CHECK_NULLABLE_VARIANT_EQ(arr[1].value()[0], std::int32_t(2));
+
+            // Assigning an element to itself through two references leaves it unchanged.
+            {
+                auto lhs = arr[1].value();
+                auto rhs = arr[1].value();
+                lhs = rhs;
+                CHECK_NULLABLE_VARIANT_EQ(arr[1].value()[0], std::int32_t(2));
+            }
+
+            // Move assignment: the destination element takes the source record.
+            auto target = arr[0].value();
+            auto source = arr[2].value();
+            target = std::move(source);
+            CHECK_NULLABLE_VARIANT_EQ(arr[0].value()[0], std::int32_t(2));
+        }
+
+        SUBCASE("the reference reads the element it was created from")
+        {
+            struct_array arr = make();
+            auto reference = arr[1].value();
+
+            // Assigning through the reference updates both the array and the reference itself.
+            reference = static_cast<struct_value>(arr[2].value());
+            CHECK_NULLABLE_VARIANT_EQ(reference[0], std::int32_t(2));
+            CHECK_NULLABLE_VARIANT_EQ(arr[1].value()[0], std::int32_t(2));
+
+            // The reference is index based: it keeps denoting the element at that index.
+            CHECK_NULLABLE_VARIANT_EQ(reference[1], std::uint8_t(2));
+            CHECK_EQ(reference.size(), 2);
+        }
+    }
 
     TEST_CASE_TEMPLATE("struct[T, uint8]", T, std::uint8_t, std::int32_t, float32_t, float64_t)
     {
@@ -472,6 +876,17 @@ namespace sparrow
                                                   "|     3|     3|\n"
                                                   "---------------";
             CHECK_EQ(formatted, expected);
+
+            // operator<< goes through the same formatter.
+            std::ostringstream stream;
+            stream << struct_arr;
+            CHECK_EQ(stream.str(), formatted);
+
+            // A null element formats as an empty cell (ref.has_value() == false).
+            struct_array with_null = struct_arr;
+            with_null[1] = nullval;
+            const std::string with_null_formatted = std::format("{}", with_null);
+            CHECK_NE(with_null_formatted, formatted);
         }
 #endif
 
