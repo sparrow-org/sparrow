@@ -19,6 +19,7 @@
 #include <version>
 
 #include "sparrow/config/config.hpp"
+#include "sparrow/layout/struct_const_reference.hpp"
 #include "sparrow/layout/struct_value.hpp"
 
 namespace sparrow
@@ -28,12 +29,10 @@ namespace sparrow
     /**
      * @brief Mutable reference to one element of a \ref struct_array.
      *
-     * Reads expose the referenced record; assigning a \ref struct_value replaces its fields. The
-     * number of fields of the assigned value must match the number of children of the array.
-     *
-     * The referenced record is materialized when the reference is created and refreshed on
-     * assignment, so reading through a reference obtained before a mutation of the same element
-     * returns the state at the time of its creation.
+     * Reads expose the referenced record through a \ref struct_const_reference, so they reflect
+     * the current state of the array. Assigning a \ref struct_value replaces the fields of the
+     * element. The number of fields of the assigned value must match the number of children of
+     * the array.
      *
      * References are invalidated by structural mutations of the array (`insert`, `erase`,
      * `resize`, ...).
@@ -45,9 +44,9 @@ namespace sparrow
         using array_type = struct_array;
         using value_type = struct_value;
         using size_type = std::size_t;
-        using reference = struct_value::const_reference;
-        using const_iterator = struct_value::const_iterator;
-        using const_reverse_iterator = struct_value::const_reverse_iterator;
+        using reference = struct_const_reference::const_reference;
+        using const_iterator = struct_const_reference::const_iterator;
+        using const_reverse_iterator = struct_const_reference::const_reverse_iterator;
 
         /**
          * @brief Constructs a reference to the element at the given index.
@@ -104,7 +103,7 @@ namespace sparrow
         /**
          * @brief Materializes the referenced record.
          *
-         * @return The referenced record.
+         * @return An owning copy of the referenced record.
          */
         operator struct_value() const;
 
@@ -252,8 +251,8 @@ namespace sparrow
         array_type* p_array = nullptr;
         /** The index of the referenced element. */
         size_type m_index = 0;
-        /** The referenced record, materialized when the reference is created. */
-        struct_value m_value;
+        /** The view of the referenced record, refreshed on assignment. */
+        struct_const_reference m_value;
     };
 }
 

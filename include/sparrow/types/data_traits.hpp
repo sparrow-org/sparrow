@@ -100,6 +100,14 @@ namespace sparrow
     };
 
     template <>
+    struct arrow_traits<struct_const_reference>
+    {
+        // An array of structs stores owning records; the const reference is the view.
+        using value_type = struct_value;
+        using const_reference = struct_const_reference;
+    };
+
+    template <>
     struct arrow_traits<decimal<std::int32_t>>
     {
         using value_type = decimal<std::int32_t>;
@@ -260,6 +268,14 @@ namespace sparrow
         {
             using type = std::vector<std::remove_const_t<T>>;
         };
+
+        // A struct array stores owning records, so the owning counterpart of the view it
+        // exposes by reference is struct_value.
+        template <>
+        struct materialized<struct_const_reference>
+        {
+            using type = struct_value;
+        };
     }
 
     namespace detail
@@ -290,7 +306,10 @@ namespace sparrow
                     all_base_types_t>,
                 std::variant>;*/
         using value_type =  // nullable_variant<nullable<null_type>, nullable<bool>, nullable<uint8_t>, ...>
-            mpl::rename<mpl::transform<detail::array_value_type_t, all_base_types_t>, nullable_variant>;
+            // unique: struct_const_reference and struct_value share the same owning counterpart.
+            mpl::rename<
+                mpl::unique<mpl::transform<detail::array_value_type_t, all_base_types_t>>,
+                nullable_variant>;
         using const_reference =  // nullable_variant<nullable<null_type>, nullable<const bool&>,
                                  // nullable<const uint8_t&>, ...>
             mpl::rename<mpl::unique<mpl::transform<detail::array_const_reference_t, all_base_types_t>>, nullable_variant>;

@@ -16,6 +16,7 @@
 
 #include <utility>
 
+#include "sparrow/layout/nested_value_types.hpp"
 #include "sparrow/struct_array.hpp"
 
 namespace sparrow
@@ -50,7 +51,7 @@ namespace sparrow
 
     struct_reference::operator struct_value() const
     {
-        return m_value;
+        return struct_value{m_value};
     }
 
     auto struct_reference::size() const -> size_type
@@ -130,7 +131,7 @@ namespace sparrow
 
     bool struct_reference::operator==(const struct_value& rhs) const
     {
-        return m_value == rhs;
+        return static_cast<struct_value>(*this) == rhs;
     }
 
     bool struct_reference::operator==(const struct_reference& rhs) const

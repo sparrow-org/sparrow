@@ -274,6 +274,7 @@ set(SPARROW_HEADERS
     ${SPARROW_INCLUDE_DIR}/sparrow/layout/primitive_array_impl.hpp
     ${SPARROW_INCLUDE_DIR}/sparrow/layout/primitive_data_access.hpp
     ${SPARROW_INCLUDE_DIR}/sparrow/layout/run_end_encoded_iterator.hpp
+    ${SPARROW_INCLUDE_DIR}/sparrow/layout/struct_const_reference.hpp
     ${SPARROW_INCLUDE_DIR}/sparrow/layout/struct_value.hpp
     ${SPARROW_INCLUDE_DIR}/sparrow/layout/temporal_types.hpp
     ${SPARROW_INCLUDE_DIR}/sparrow/layout/time_types.hpp
@@ -359,6 +360,7 @@ set(SPARROW_SRC
     ${SPARROW_SOURCE_DIR}/layout/fixed_width_binary_array_utils.cpp
     ${SPARROW_SOURCE_DIR}/layout/list_value.cpp
     ${SPARROW_SOURCE_DIR}/layout/map_value.cpp
+    ${SPARROW_SOURCE_DIR}/layout/struct_const_reference.cpp
     ${SPARROW_SOURCE_DIR}/layout/struct_value.cpp
     ${SPARROW_SOURCE_DIR}/map_array.cpp
     ${SPARROW_SOURCE_DIR}/null_array.cpp

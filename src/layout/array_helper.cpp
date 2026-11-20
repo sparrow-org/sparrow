@@ -94,9 +94,24 @@ namespace sparrow
                     values.emplace_back(make_stored_value());
                     return array{binary_array(std::move(values))};
                 }
+                else if constexpr (std::same_as<source_value_type, struct_value>)
+                {
+                    // A struct value owns its fields, so a one-element struct array can be built
+                    // from it: one child array per field, holding that field's value.
+                    if (!has_value)
+                    {
+                        return array{null_array(1)};
+                    }
+                    std::vector<array> children;
+                    children.reserve(typed_value.get().size());
+                    for (std::size_t i = 0; i < typed_value.get().size(); ++i)
+                    {
+                        children.push_back(array_make_from_element(typed_value.get()[i]));
+                    }
+                    return array{struct_array{std::move(children)}};
+                }
                 else if constexpr (std::same_as<source_value_type, list_value>
-                                   || std::same_as<source_value_type, map_value>
-                                   || std::same_as<source_value_type, struct_value>)
+                                   || std::same_as<source_value_type, map_value>)
                 {
                     throw std::invalid_argument("Cannot create a union child from a nested value");
                 }

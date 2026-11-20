@@ -61,7 +61,7 @@ namespace sparrow
         using array_type = struct_array;
         using inner_value_type = struct_value;
         using inner_reference = struct_reference;
-        using inner_const_reference = struct_value;
+        using inner_const_reference = struct_const_reference;
         using value_iterator = functor_index_iterator<detail::layout_value_functor<array_type, inner_reference>>;
         using const_value_iterator = functor_index_iterator<
             detail::layout_value_functor<const array_type, inner_const_reference>>;
@@ -119,9 +119,10 @@ namespace sparrow
      * };
      * struct_array persons(std::move(children));
      *
-     * // Access struct elements
-     * auto person = persons[0];  // Get struct_value
-     * auto id_field = person["id"];  // Access field by name
+     * // Access struct elements: the element reads as a struct_const_reference,
+     * // materialize it into a struct_value to detach it from the array.
+     * auto person = persons[0];
+     * auto id_field = person.value()["id"];  // Access field by name
      * ```
      */
     class struct_array final : public mutable_array_bitmap_base<struct_array>
@@ -142,7 +143,7 @@ namespace sparrow
 
         using inner_value_type = struct_value;
         using inner_reference = struct_reference;
-        using inner_const_reference = struct_value;
+        using inner_const_reference = struct_const_reference;
 
         using value_type = nullable<inner_value_type>;
         using const_reference = nullable<inner_const_reference, bitmap_const_reference>;

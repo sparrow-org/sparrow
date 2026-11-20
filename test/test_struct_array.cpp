@@ -19,6 +19,7 @@
 
 #include "sparrow/array.hpp"
 #include "sparrow/layout/array_helper.hpp"
+#include "sparrow/list_array.hpp"
 #include "sparrow/map_array.hpp"
 #include "sparrow/primitive_array.hpp"
 #include "sparrow/struct_array.hpp"
@@ -396,8 +397,7 @@ namespace sparrow
 
             SUBCASE("assignment works for a nested struct child")
             {
-                // A nested struct child cannot be rebuilt from its elements (array_make_from_element
-                // rejects nested values), so this only works through the in-place path.
+                // The nested struct child is written in place when its own children support it.
                 const auto make = []
                 {
                     std::vector<array> grand_children;
@@ -418,7 +418,7 @@ namespace sparrow
                 arr[1] = arr[2];
 
                 // The child of the nested struct holds the primitive value.
-                const auto nested = std::get<nullable<struct_value>>(arr[1].value()[0]);
+                const auto nested = std::get<nullable<struct_const_reference>>(arr[1].value()[0]);
                 REQUIRE(nested.has_value());
                 CHECK_NULLABLE_VARIANT_EQ(nested.value()[0], std::int64_t(30));
                 for (std::size_t r = 0; r < arr.size(); ++r)
@@ -641,6 +641,341 @@ namespace sparrow
             // The reference is index based: it keeps denoting the element at that index.
             CHECK_NULLABLE_VARIANT_EQ(reference[1], std::uint8_t(2));
             CHECK_EQ(reference.size(), 2);
+        }
+
+        SUBCASE("owning value detaches from the array")
+        {
+            struct_array arr = make();
+            const struct_array& const_arr = arr;
+
+            // value(i) const yields a view reading through the children; copying it into a
+            // struct_value snapshots the fields.
+            const struct_value before = const_arr[0].value();
+            CHECK_NULLABLE_VARIANT_EQ(before[0], std::int32_t(0));
+            CHECK_NULLABLE_VARIANT_EQ(before[1], std::uint8_t(0));
+
+            // Mutating the element afterwards leaves the snapshot untouched.
+            arr[0] = static_cast<struct_value>(const_arr[2].value());
+            CHECK_NULLABLE_VARIANT_EQ(const_arr[0].value()[0], std::int32_t(2));
+            CHECK_NULLABLE_VARIANT_EQ(before[0], std::int32_t(0));
+            CHECK_NULLABLE_VARIANT_EQ(before[1], std::uint8_t(0));
+            CHECK_FALSE(before == static_cast<struct_value>(const_arr[0].value()));
+        }
+    }
+
+    TEST_CASE("struct_value")
+    {
+        // Two children named "item 0" and "item 1", values 0..n-1 in each (see make_struct_proxy).
+        const auto make = []
+        {
+            return struct_array(test::make_struct_proxy<std::int32_t, std::uint8_t>(3));
+        };
+
+        SUBCASE("default construction is the empty record")
+        {
+            const struct_value value{};
+            CHECK_EQ(value.size(), 0);
+            CHECK(value.empty());
+            CHECK(value.names().empty());
+            CHECK(value.begin() == value.end());
+            // Two empty records are equal, whatever their field count.
+            CHECK(value == struct_value{});
+
+            // An empty record is not equal to a non-empty one.
+            const struct_value record = make()[0].value();
+            CHECK_FALSE(value == record);
+            CHECK_FALSE(record == value);
+        }
+
+        SUBCASE("element access")
+        {
+            const struct_value value = make()[1].value();
+
+            CHECK_EQ(value.size(), 2);
+            CHECK_FALSE(value.empty());
+            CHECK_NULLABLE_VARIANT_EQ(value[0], std::int32_t(1));
+            CHECK_NULLABLE_VARIANT_EQ(value[1], std::uint8_t(1));
+
+            CHECK_NULLABLE_VARIANT_EQ(value.at(0), std::int32_t(1));
+            CHECK_NULLABLE_VARIANT_EQ(value.at(1), std::uint8_t(1));
+            CHECK_THROWS_AS(value.at(2), std::out_of_range);
+
+            CHECK_NULLABLE_VARIANT_EQ(value.front(), std::int32_t(1));
+            CHECK_NULLABLE_VARIANT_EQ(value.back(), std::uint8_t(1));
+        }
+
+        SUBCASE("access by name")
+        {
+            const struct_value value = make()[2].value();
+
+            CHECK_NULLABLE_VARIANT_EQ(value.at("item 0"), std::int32_t(2));
+            CHECK_NULLABLE_VARIANT_EQ(value.at("item 1"), std::uint8_t(2));
+            CHECK_THROWS_AS(value.at("missing"), std::out_of_range);
+            // A misspelled name must not fall back to a positional read.
+            CHECK_THROWS_AS(value.at(""), std::out_of_range);
+        }
+
+        SUBCASE("names are owned and keep the absent-name case")
+        {
+            const struct_value value = make()[0].value();
+            const auto& names = value.names();
+            REQUIRE_EQ(names.size(), 2);
+            REQUIRE(names[0].has_value());
+            REQUIRE(names[1].has_value());
+            CHECK_EQ(*names[0], std::string_view("item 0"));
+            CHECK_EQ(*names[1], std::string_view("item 1"));
+
+            // An unnamed child yields an engaged-empty optional, not an engaged name.
+            std::vector<array> unnamed;
+            unnamed.emplace_back(primitive_array<std::int32_t>{std::vector<std::int32_t>{7}});
+            const struct_value unnamed_value = struct_array{unnamed}[0].value();
+            REQUIRE_EQ(unnamed_value.names().size(), 1);
+            CHECK_FALSE(unnamed_value.names()[0].has_value());
+        }
+
+        SUBCASE("iteration")
+        {
+            const struct_value value = make()[2].value();
+
+            std::vector<array_traits::value_type> forward(value.begin(), value.end());
+            REQUIRE_EQ(forward.size(), 2);
+            CHECK_NULLABLE_VARIANT_EQ(forward[0], std::int32_t(2));
+            CHECK_NULLABLE_VARIANT_EQ(forward[1], std::uint8_t(2));
+            CHECK_EQ(forward, std::vector<array_traits::value_type>(value.cbegin(), value.cend()));
+
+            std::vector<array_traits::value_type> reverse(value.rbegin(), value.rend());
+            REQUIRE_EQ(reverse.size(), 2);
+            CHECK_NULLABLE_VARIANT_EQ(reverse[0], std::uint8_t(2));
+            CHECK_NULLABLE_VARIANT_EQ(reverse[1], std::int32_t(2));
+            CHECK_EQ(
+                reverse,
+                std::vector<array_traits::value_type>(value.crbegin(), value.crend())
+            );
+
+            // The iterators are random access and indexable.
+            CHECK_EQ(static_cast<std::size_t>(value.end() - value.begin()), value.size());
+            CHECK_NULLABLE_VARIANT_EQ(value.begin()[1], std::uint8_t(2));
+        }
+
+        SUBCASE("equality ignores names and compares fields in order")
+        {
+            const struct_value lhs = make()[1].value();
+            const struct_value same = make()[1].value();
+            const struct_value other = make()[2].value();
+
+            CHECK(lhs == same);
+            CHECK_FALSE(lhs == other);
+            CHECK_FALSE(lhs == struct_value{});
+
+            // A record rebuilt with different names but the same field values is equal.
+            std::vector<array> renamed;
+            renamed.emplace_back(
+                array(primitive_array<std::int32_t>(std::vector<std::int32_t>{1}))
+            );
+            renamed.back().set_name("renamed 0");
+            renamed.emplace_back(
+                array(primitive_array<std::uint8_t>(std::vector<std::uint8_t>{1}))
+            );
+            renamed.back().set_name("renamed 1");
+            const struct_value renamed_value = struct_array{renamed}[0].value();
+            CHECK_EQ(renamed_value.names()[0].value(), std::string_view("renamed 0"));
+            CHECK(lhs == renamed_value);
+        }
+
+        SUBCASE("copy and move do not alias the array")
+        {
+            struct_array arr = make();
+
+            const struct_value original = arr[0].value();
+            struct_value copy = original;
+            struct_value moved = std::move(copy);
+
+            arr[0] = static_cast<struct_value>(arr[2].value());
+            CHECK_NULLABLE_VARIANT_EQ(arr[0].value()[0], std::int32_t(2));
+            CHECK_NULLABLE_VARIANT_EQ(original[0], std::int32_t(0));
+            CHECK_NULLABLE_VARIANT_EQ(moved[0], std::int32_t(0));
+
+            // Reassigning an owning value replaces its fields.
+            struct_value assigned = arr[0].value();
+            assigned = original;
+            CHECK_NULLABLE_VARIANT_EQ(assigned[0], std::int32_t(0));
+        }
+
+        SUBCASE("assignment through an owning value keeps field count compatibility")
+        {
+            struct_array arr = make();
+            struct_value value = arr[1].value();
+
+            // The record is an owning snapshot: assigning it does not resize it.
+            arr[1] = value;
+            CHECK_NULLABLE_VARIANT_EQ(arr[1].value()[0], std::int32_t(1));
+            CHECK_EQ(value.size(), 2);
+        }
+
+#if defined(__cpp_lib_format)
+        SUBCASE("formatting")
+        {
+            const struct_value value = make()[1].value();
+            const std::string formatted = std::format("{}", value);
+            CHECK_EQ(formatted, "<1, 1>");
+
+            // Same rendering through operator<<.
+            std::ostringstream stream;
+            stream << value;
+            CHECK_EQ(stream.str(), formatted);
+
+            // The empty record renders as an empty angle-bracket pair.
+            CHECK_EQ(std::format("{}", struct_value{}), "<>");
+
+            // No trailing separator: a single field has none.
+            std::vector<array> single;
+            single.emplace_back(primitive_array<std::int32_t>{std::vector<std::int32_t>{5}});
+            CHECK_EQ(std::format("{}", struct_array{single}[0].value()), "<5>");
+
+            // The view formats identically to the owning value it materializes into.
+            const struct_array arr = make();
+            const struct_const_reference view = arr[1].value();
+            CHECK_EQ(std::format("{}", view), formatted);
+            std::ostringstream view_stream;
+            view_stream << view;
+            CHECK_EQ(view_stream.str(), formatted);
+        }
+#endif
+
+        SUBCASE("cross-type equality with a view")
+        {
+            struct_array arr = make();
+            const struct_value value = arr[1].value();
+
+            // Both operand orders are defined, and a view compares by field values.
+            CHECK(value == arr[1].value());
+            CHECK(arr[1].value() == value);
+            CHECK_FALSE(value == arr[0].value());
+            CHECK_FALSE(arr[0].value() == value);
+
+            // The owning value keeps comparing equal to a fresh snapshot of its own element,
+            // while the mutated element no longer matches it.
+            arr[1] = static_cast<struct_value>(arr[2].value());
+            CHECK_FALSE(value == arr[1].value());
+            CHECK(value == value);
+
+            // Snapshotting the untouched element 0 gives a different record.
+            CHECK_FALSE(value == struct_value{arr[0].value()});
+            // Element 1 now holds element 2's fields, so it differs from the original snapshot.
+            CHECK_FALSE(value == struct_value{arr[1].value()});
+        }
+    }
+
+    TEST_CASE("struct_const_reference aliases the array")
+    {
+        struct_array arr(test::make_struct_proxy<std::int32_t, std::uint8_t>(3));
+        const struct_array& const_arr = arr;
+
+        // The view reads through the children: it reflects later mutations of the element.
+        const struct_const_reference view = const_arr[0].value();
+        CHECK_NULLABLE_VARIANT_EQ(view[0], std::int32_t(0));
+
+        arr[0] = static_cast<struct_value>(const_arr[2].value());
+        CHECK_NULLABLE_VARIANT_EQ(view[0], std::int32_t(2));
+
+        // A view of another element is not affected.
+        const struct_const_reference untouched = const_arr[1].value();
+        CHECK_NULLABLE_VARIANT_EQ(untouched[0], std::int32_t(1));
+
+        // Views compare by field values: the view still denotes element 0, now holding <2, 2>.
+        CHECK(view == const_arr[0].value());
+        CHECK(view == static_cast<struct_value>(const_arr[0].value()));
+        CHECK_FALSE(view == untouched);
+        CHECK(const_arr[1].value() == untouched);
+    }
+
+    TEST_CASE("array_make_from_element with a struct value")
+    {
+        // The owning struct value can be turned into a one-element struct array; a view cannot,
+        // because it does not own its fields.
+        const auto make = []
+        {
+            return struct_array(test::make_struct_proxy<std::int32_t, std::uint8_t>(3));
+        };
+
+        SUBCASE("an engaged struct value yields a one-element struct array")
+        {
+            const struct_array source = make();
+            const array_traits::value_type value = nullable<struct_value>(source[1].value());
+
+            array built = array_make_from_element(value);
+            REQUIRE_EQ(built.size(), 1);
+            CHECK_EQ(built.data_type(), data_type::STRUCT);
+
+            const auto element = std::get<nullable<struct_const_reference>>(built[0]);
+            REQUIRE(element.has_value());
+            CHECK_NULLABLE_VARIANT_EQ(element.value()[0], std::int32_t(1));
+            CHECK_NULLABLE_VARIANT_EQ(element.value()[1], std::uint8_t(1));
+        }
+
+        SUBCASE("a disengaged struct value yields a null element")
+        {
+            const array_traits::value_type value = make_nullable(struct_value{}, false);
+
+            array built = array_make_from_element(value);
+            REQUIRE_EQ(built.size(), 1);
+            CHECK_FALSE(built[0].has_value());
+        }
+
+        SUBCASE("the built element detaches from the source array")
+        {
+            struct_array source = make();
+            const array_traits::value_type value = nullable<struct_value>(source[1].value());
+            array built = array_make_from_element(value);
+
+            source[1] = static_cast<struct_value>(source[2].value());
+
+            CHECK_NULLABLE_VARIANT_EQ(
+                std::get<nullable<struct_const_reference>>(built[0]).value()[0],
+                std::int32_t(1)
+            );
+            CHECK_NULLABLE_VARIANT_EQ(source[1].value()[0], std::int32_t(2));
+        }
+
+        SUBCASE("a struct view materializes into an owning record")
+        {
+            // array_traits::value_type has no view alternative: the view is materialized into a
+            // nullable<struct_value> when stored, so the built array owns its fields.
+            const struct_array source = make();
+            const array_traits::value_type view = nullable<struct_const_reference>(source[1].value());
+
+            array built = array_make_from_element(view);
+            REQUIRE_EQ(built.size(), 1);
+            const auto element = std::get<nullable<struct_const_reference>>(built[0]);
+            REQUIRE(element.has_value());
+            CHECK_NULLABLE_VARIANT_EQ(element.value()[0], std::int32_t(1));
+        }
+
+        SUBCASE("a list value is still rejected")
+        {
+            // list_value has no owning counterpart in this change, so building from it throws.
+            array flat(primitive_array<std::int32_t>{std::vector<std::int32_t>{1, 2}});
+            const array list_array_source{
+                list_array{std::move(flat), list_array::offset_from_sizes(std::vector<std::size_t>{2}), true}
+            };
+            const array_traits::value_type value = list_array_source[0];
+
+            CHECK_THROWS_AS(array_make_from_element(value), std::invalid_argument);
+        }
+
+        SUBCASE("a struct value round-trips through insert")
+        {
+            const struct_array source = make();
+            const array_traits::value_type value = nullable<struct_value>(source[2].value());
+
+            // append_values routes through array_make_from_element, then inserts.
+            array destination{make()};
+            append_values(destination, std::vector<array_traits::value_type>{value});
+            REQUIRE_EQ(destination.size(), 4);
+            const auto appended = std::get<nullable<struct_const_reference>>(destination[3]);
+            REQUIRE(appended.has_value());
+            CHECK_NULLABLE_VARIANT_EQ(appended.value()[0], std::int32_t(2));
+            CHECK_NULLABLE_VARIANT_EQ(appended.value()[1], std::uint8_t(2));
         }
     }
 

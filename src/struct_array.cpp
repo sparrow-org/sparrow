@@ -106,7 +106,7 @@ namespace sparrow
 
     auto struct_array::value(size_type i) const -> inner_const_reference
     {
-        return struct_value{m_children, i};
+        return struct_const_reference{m_children, i};
     }
 
     auto struct_array::make_children() -> children_type

@@ -26,6 +26,7 @@
 #include "sparrow/layout/layout_concept.hpp"
 #include "sparrow/layout/list_value.hpp"
 #include "sparrow/layout/map_value.hpp"
+#include "sparrow/layout/struct_const_reference.hpp"
 #include "sparrow/layout/struct_value.hpp"
 #include "sparrow/null_array.hpp"
 #include "sparrow/types/data_traits.hpp"
