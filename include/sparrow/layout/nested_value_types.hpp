@@ -20,4 +20,5 @@
 // (otherwise there will be incomplete type errors)
 #include "sparrow/layout/list_value.hpp"
 #include "sparrow/layout/map_value.hpp"
+#include "sparrow/layout/struct_const_reference.hpp"
 #include "sparrow/layout/struct_value.hpp"

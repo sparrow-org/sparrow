@@ -676,6 +676,7 @@ namespace sparrow
 
     class list_value;
     class struct_value;
+    class struct_const_reference;
     class map_value;
 
     /// C++ types value representation types matching Arrow types.
@@ -719,6 +720,7 @@ namespace sparrow
         chrono::time_nanoseconds,
         list_value,
         struct_value,
+        struct_const_reference,
         map_value,
         decimal<std::int32_t>,
         decimal<std::int64_t>,

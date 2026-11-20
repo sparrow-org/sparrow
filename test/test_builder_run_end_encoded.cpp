@@ -107,23 +107,23 @@ namespace sparrow
                 REQUIRE_EQ(arr.size(), 4);
 
                 // 0
-                auto arr0 = std::get<nullable<struct_value>>(static_cast<array_traits::const_reference>(arr[0]));
+                auto arr0 = std::get<nullable<struct_const_reference>>(static_cast<array_traits::const_reference>(arr[0]));
                 REQUIRE(arr0.has_value());
                 CHECK_NULLABLE_VARIANT_EQ(arr0.value()[0], int(1));
                 CHECK_NULLABLE_VARIANT_EQ(arr0.value()[1], std::uint16_t(1));
 
                 // 1
-                auto arr1 = std::get<nullable<struct_value>>(static_cast<array_traits::const_reference>(arr[1]));
+                auto arr1 = std::get<nullable<struct_const_reference>>(static_cast<array_traits::const_reference>(arr[1]));
                 REQUIRE(!arr1.has_value());
 
                 // 2
-                auto arr2 = std::get<nullable<struct_value>>(static_cast<array_traits::const_reference>(arr[2]));
+                auto arr2 = std::get<nullable<struct_const_reference>>(static_cast<array_traits::const_reference>(arr[2]));
                 REQUIRE(arr2.has_value());
                 CHECK(!arr2.value()[0].has_value());
                 CHECK_NULLABLE_VARIANT_EQ(arr2.value()[1], std::uint16_t(42));
 
                 // 3
-                auto arr3 = std::get<nullable<struct_value>>(static_cast<array_traits::const_reference>(arr[3]));
+                auto arr3 = std::get<nullable<struct_const_reference>>(static_cast<array_traits::const_reference>(arr[3]));
                 REQUIRE(arr3.has_value());
                 CHECK(!arr3.value()[0].has_value());
                 CHECK_NULLABLE_VARIANT_EQ(arr3.value()[1], std::uint16_t(42));

@@ -14,33 +14,64 @@
 
 #pragma once
 
-#include "sparrow/layout/layout_utils.hpp"
-#include "sparrow/utils/functor_index_iterator.hpp"
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
 #if __has_include(<format>)
 #    include <format>
 #endif
 
 #include "sparrow/config/config.hpp"
-#include "sparrow/layout/array_wrapper.hpp"
+#include "sparrow/layout/layout_utils.hpp"
+#include "sparrow/layout/list_value.hpp"
+#include "sparrow/layout/map_value.hpp"
+#include "sparrow/layout/struct_const_reference.hpp"
 #include "sparrow/types/data_traits.hpp"
-#include "sparrow/utils/memory.hpp"
+#include "sparrow/utils/functor_index_iterator.hpp"
 
 namespace sparrow
 {
+    /**
+     * @brief Owning snapshot of one element of a \ref struct_array.
+     *
+     * Unlike \ref struct_const_reference, which reads through the children of the array it was
+     * created from, a \c struct_value owns its field values and its field names. Mutating the
+     * array afterwards therefore leaves the value unchanged.
+     *
+     * Copying or moving a \c struct_value copies the fields; it never aliases the array.
+     */
+// MSVC warns C4251 when a dllexport class holds std::vector members, whose
+// instantiation has no dll-interface. This is safe for an owning value type: the
+// members are only touched by the out-of-line methods of the library.
+#ifdef _MSC_VER
+#    pragma warning(push)
+#    pragma warning(disable : 4251)
+#endif
     class SPARROW_API struct_value
     {
     public:
 
         using value_type = array_traits::value_type;
-        using const_reference = array_traits::const_reference;
+        /** Field access returns owned values: an owning record holds no reference to an array. */
+        using const_reference = value_type;
         using size_type = std::size_t;
-        using child_ptr = cloning_ptr<array_wrapper>;
         using const_functor_type = detail::layout_bracket_functor<const struct_value, const_reference>;
         using const_iterator = functor_index_iterator<const_functor_type>;
         using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 
+        /** Constructs the empty record (no field). */
         struct_value() = default;
-        struct_value(const std::vector<child_ptr>& children, size_type index);
+
+        /**
+         * @brief Copies the record referenced by \p reference.
+         *
+         * The field values and names are copied, so the result does not alias the array
+         * \p reference was created from.
+         *
+         * @param reference The referenced record.
+         */
+        struct_value(const struct_const_reference& reference);
 
         [[nodiscard]] size_type size() const;
         [[nodiscard]] bool empty() const;
@@ -64,23 +95,21 @@ namespace sparrow
         [[nodiscard]] const_reverse_iterator rend() const;
         [[nodiscard]] const_reverse_iterator crend() const;
 
-        [[nodiscard]] auto names() const
-        {
-            const auto result = (*p_children)
-                                | std::views::transform(
-                                    [](const auto& child)
-                                    {
-                                        return child->get_arrow_proxy().name();
-                                    }
-                                );
-            return result;
-        }
+        /**
+         * @brief Gets the names of the fields.
+         *
+         * @return The names of the fields, an empty optional for an unnamed field.
+         */
+        [[nodiscard]] const std::vector<std::optional<std::string>>& names() const;
 
     private:
 
-        const std::vector<child_ptr>* p_children = nullptr;
-        size_type m_index = 0u;
+        std::vector<value_type> m_fields;
+        std::vector<std::optional<std::string>> m_names;
     };
+#ifdef _MSC_VER
+#    pragma warning(pop)
+#endif
 
     SPARROW_API
     bool operator==(const struct_value& lhs, const struct_value& rhs);

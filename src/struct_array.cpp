@@ -14,7 +14,9 @@
 
 #include "sparrow/struct_array.hpp"
 
+#include <algorithm>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "sparrow/array.hpp"
@@ -76,35 +78,35 @@ namespace sparrow
 
     auto struct_array::value_begin() -> value_iterator
     {
-        return value_iterator{detail::layout_value_functor<self_type, inner_value_type>{this}, 0};
+        return value_iterator{detail::layout_value_functor<self_type, inner_reference>{this}, 0};
     }
 
     auto struct_array::value_end() -> value_iterator
     {
-        return {detail::layout_value_functor<self_type, inner_value_type>(this), this->size()};
+        return {detail::layout_value_functor<self_type, inner_reference>(this), this->size()};
     }
 
     auto struct_array::value_cbegin() const -> const_value_iterator
     {
-        return {detail::layout_value_functor<const self_type, inner_value_type>(this), 0};
+        return {detail::layout_value_functor<const self_type, inner_const_reference>(this), 0};
     }
 
     auto struct_array::value_cend() const -> const_value_iterator
     {
         return const_value_iterator(
-            detail::layout_value_functor<const self_type, inner_value_type>(this),
+            detail::layout_value_functor<const self_type, inner_const_reference>(this),
             this->size()
         );
     }
 
     auto struct_array::value(size_type i) -> inner_reference
     {
-        return struct_value{m_children, i};
+        return struct_reference{this, i};
     }
 
     auto struct_array::value(size_type i) const -> inner_const_reference
     {
-        return struct_value{m_children, i};
+        return struct_const_reference{m_children, i};
     }
 
     auto struct_array::make_children() -> children_type
@@ -145,6 +147,33 @@ namespace sparrow
         }
     }
 
+    auto struct_array::make_child_values(const struct_value& value, const char* operation) const
+        -> std::vector<array_traits::value_type>
+    {
+        const size_type child_count = children_count();
+        const size_type value_count = value.size();
+        // A default-constructed struct_value (no children) supplies one default value per child,
+        // not a null element: the result is a valid record whose fields are their types' defaults
+        // (e.g. <0, 0> for two int32 children, with has_value() still true). Inserting a null
+        // element requires passing an empty nullable, as in make_nullable(struct_value{}, false).
+        const bool is_default_value = value_count == 0 && child_count != 0;
+        if (!is_default_value && value_count != child_count)
+        {
+            throw std::invalid_argument(
+                std::string(operation) + ": incompatible number of fields (expected "
+                + std::to_string(child_count) + ", got " + std::to_string(value_count) + ")"
+            );
+        }
+
+        std::vector<array_traits::value_type> values(child_count);
+        for (size_type child_index = 0; child_index < child_count; ++child_index)
+        {
+            values[child_index] = is_default_value ? array_default_value(*m_children[child_index])
+                                                   : value[child_index];
+        }
+        return values;
+    }
+
     struct_array::value_iterator
     struct_array::insert_value(const_value_iterator pos, const struct_value& value, size_type count)
     {
@@ -155,24 +184,10 @@ namespace sparrow
         }
         if (get_arrow_proxy().offset() != 0)
         {
-            throw std::logic_error("struct_array::insert_value does not support sliced arrays");
+            throw std::logic_error("struct_array::insert_value does not support sliced arrays (non-zero offset)");
         }
 
-        const size_type child_count = children_count();
-        const size_type value_count = value.size();
-        const bool is_null_value = value_count == 0 && child_count != 0;
-        if (!is_null_value && value_count != child_count)
-        {
-            throw std::invalid_argument("Struct value has an incompatible number of fields");
-        }
-
-        std::vector<dynamic_value> inserted_values(child_count);
-        for (size_type child_index = 0; child_index < child_count; ++child_index)
-        {
-            inserted_values[child_index] = is_null_value
-                                               ? array_default_value(*m_children[child_index])
-                                               : value[child_index];
-        }
+        const std::vector<dynamic_value> inserted_values = make_child_values(value, "struct_array::insert_value");
 
         const size_type old_size = this->size();
         rebuild_children(
@@ -189,6 +204,56 @@ namespace sparrow
         return std::next(value_begin(), static_cast<std::ptrdiff_t>(index));
     }
 
+    void struct_array::set_value(size_type index, const struct_value& value)
+    {
+        SPARROW_ASSERT_TRUE(index < this->size());
+        if (get_arrow_proxy().offset() != 0)
+        {
+            throw std::logic_error("struct_array::set_value does not support sliced arrays (non-zero offset)");
+        }
+
+        std::vector<dynamic_value> replaced_values = make_child_values(value, "struct_array::set_value");
+        const bool all_in_place = std::ranges::all_of(
+            m_children,
+            [](const auto& child)
+            {
+                return supports_element_assignment(make_array_view(*child));
+            }
+        );
+        if (all_in_place)
+        {
+            for (std::size_t child_index = 0; child_index < children_count(); ++child_index)
+            {
+                array child_view = make_array_view(*m_children[child_index]);
+                if (!element_assignment_accepts(child_view, replaced_values[child_index]))
+                {
+                    throw std::invalid_argument(
+                        "struct_array::set_value: field " + std::to_string(child_index)
+                        + " value type does not match the child array value type (child format: "
+                        + std::string(data_type_to_format(child_view.data_type())) + ")"
+                    );
+                }
+            }
+            for (std::size_t child_index = 0; child_index < children_count(); ++child_index)
+            {
+                array child_view = make_array_view(*m_children[child_index]);
+                set_element(child_view, index, replaced_values[child_index]);
+                m_children[child_index] = array_factory(get_arrow_proxy().children()[child_index].view());
+            }
+            get_arrow_proxy().update_buffers();
+        }
+        else
+        {
+            rebuild_children(
+                this->size(),
+                [&](std::vector<dynamic_value>& new_values, size_type child_index)
+                {
+                    new_values[index] = replaced_values[child_index];
+                }
+            );
+        }
+    }
+
     struct_array::value_iterator struct_array::erase_values(const_value_iterator pos, size_type count)
     {
         const auto index = static_cast<size_type>(std::distance(value_cbegin(), pos));
@@ -198,7 +263,7 @@ namespace sparrow
         }
         if (get_arrow_proxy().offset() != 0)
         {
-            throw std::logic_error("struct_array::erase_values does not support sliced arrays");
+            throw std::logic_error("struct_array::erase_values does not support sliced arrays (non-zero offset)");
         }
 
         const size_type old_size = this->size();

@@ -13,53 +13,62 @@
 // limitations under the License.
 
 #include <algorithm>
+#include <stdexcept>
 
 #include "sparrow/layout/array_helper.hpp"
-#include "sparrow/layout/nested_value_types.hpp"
+#include "sparrow/layout/struct_value.hpp"
 
 namespace sparrow
 {
-    struct_value::struct_value(const std::vector<child_ptr>& children, size_type index)
-        : p_children(&children)
-        , m_index(index)
+    struct_value::struct_value(const struct_const_reference& reference)
     {
+        const size_type field_count = reference.size();
+        m_fields.reserve(field_count);
+        for (size_type i = 0; i < field_count; ++i)
+        {
+            m_fields.push_back(reference[i]);
+        }
+        for (const auto& name : reference.names())
+        {
+            m_names.emplace_back(name);
+        }
     }
 
     auto struct_value::size() const -> size_type
     {
-        return p_children == nullptr ? 0 : p_children->size();
+        return m_fields.size();
     }
 
     bool struct_value::empty() const
     {
-        return size() == 0;
+        return m_fields.empty();
     }
 
     auto struct_value::operator[](size_type i) const -> const_reference
     {
         SPARROW_ASSERT_TRUE(i < size());
-        return array_element(*(((*p_children)[i]).get()), m_index);
+        return m_fields[i];
     }
 
     auto struct_value::at(size_type i) const -> const_reference
     {
-        return array_element(*((p_children->at(i)).get()), m_index);
+        return m_fields.at(i);
     }
 
     auto struct_value::at(std::string_view name) const -> const_reference
     {
-        auto it = std::ranges::find_if(
-            *p_children,
-            [&name](const auto& child)
+        const auto it = std::ranges::find_if(
+            m_names,
+            [name](const auto& candidate)
             {
-                return child->get_arrow_proxy().name() == name;
+                return candidate.has_value() && *candidate == name;
             }
         );
-        if (it != p_children->end())
+        if (it == m_names.end())
         {
-            return array_element(*((*it).get()), m_index);
+            throw std::out_of_range("Child not found");
         }
-        throw std::out_of_range("Child not found");
+        return m_fields[static_cast<size_type>(it - m_names.begin())];
     }
 
     auto struct_value::front() const -> const_reference
@@ -70,6 +79,11 @@ namespace sparrow
     auto struct_value::back() const -> const_reference
     {
         return (*this)[size() - 1];
+    }
+
+    auto struct_value::names() const -> const std::vector<std::optional<std::string>>&
+    {
+        return m_names;
     }
 
     bool operator==(const struct_value& lhs, const struct_value& rhs)

@@ -94,9 +94,24 @@ namespace sparrow
                     values.emplace_back(make_stored_value());
                     return array{binary_array(std::move(values))};
                 }
+                else if constexpr (std::same_as<source_value_type, struct_value>)
+                {
+                    // A struct value owns its fields, so a one-element struct array can be built
+                    // from it: one child array per field, holding that field's value.
+                    if (!has_value)
+                    {
+                        return array{null_array(1)};
+                    }
+                    std::vector<array> children;
+                    children.reserve(typed_value.get().size());
+                    for (std::size_t i = 0; i < typed_value.get().size(); ++i)
+                    {
+                        children.push_back(array_make_from_element(typed_value.get()[i]));
+                    }
+                    return array{struct_array{std::move(children)}};
+                }
                 else if constexpr (std::same_as<source_value_type, list_value>
-                                   || std::same_as<source_value_type, map_value>
-                                   || std::same_as<source_value_type, struct_value>)
+                                   || std::same_as<source_value_type, map_value>)
                 {
                     throw std::invalid_argument("Cannot create a union child from a nested value");
                 }
@@ -159,6 +174,38 @@ namespace sparrow
                                                        const typename ARRAY::value_type& typed_value,
                                                        std::size_t count
                                                    ) { array.insert(pos, typed_value, count); };
+
+        // A layout supports assigning one element in place when its mutable operator[] yields a
+        // nullable reference that can take the array value type, as mutable_array_base does.
+        //
+        // decimal_array is excluded: its element assignment scales the value with
+        // `static_cast<storage_type>(size_t)`, which MSVC cannot compile for int128_t / int256_t.
+        // Writing one element in place would instantiate that code even though it never runs, so
+        // decimal children take the rebuild fallback instead.
+        template <class T>
+        struct is_decimal_array : std::false_type
+        {
+        };
+
+        template <class T>
+        struct is_decimal_array<decimal_array<T>> : std::true_type
+        {
+        };
+
+        template <class ARRAY>
+        constexpr bool is_map_array_v = std::same_as<std::remove_cvref_t<ARRAY>, map_array>;
+
+        // A layout supports assigning one element in place when its mutable operator[] yields a
+        // nullable reference (as mutable_array_base does) and writing through it is compilable.
+        template <class ARRAY>
+        constexpr bool
+            supports_element_assign_v = is_nullable_v<typename ARRAY::value_type>
+                                        && not is_decimal_array<ARRAY>::value
+                                        && not is_map_array_v<ARRAY>
+                                        && requires(ARRAY& a, std::size_t i) {
+                                               { a[i] };
+                                               requires is_nullable_v<std::remove_cvref_t<decltype(a[i])>>;
+                                           };
     }
 
     array make_array_view(const array_wrapper& source)
@@ -242,6 +289,107 @@ namespace sparrow
                 {
                     throw std::runtime_error(
                         "insert_element: destination array does not support insert(value, count) "
+                        "(destination format: "
+                        + destination_format + ")"
+                    );
+                }
+            }
+        );
+    }
+
+    // Compile-time guard: the in-place path must never instantiate decimal_array::assign, whose
+    // scaling code does not compile with MSVC for int128_t / int256_t (see the comment next to
+    // supports_element_assign_v). A struct with a decimal child then takes the rebuild fallback.
+    static_assert(
+        not supports_element_assign_v<decimal_array<decimal<int128_t>>>
+            && not supports_element_assign_v<decimal_array<decimal<int256_t>>>,
+        "decimal_array must not take the in-place element assignment path"
+    );
+
+    bool supports_element_assignment(const array& destination)
+    {
+        // array::visit is the const overload only, so it returns void: collect the answer instead
+        // of returning it from the visitor.
+        bool supported = false;
+        destination.visit(
+            [&supported](const auto& destination_impl)
+            {
+                using destination_array_type = std::decay_t<decltype(destination_impl)>;
+                supported = supports_element_assign_v<destination_array_type>;
+            }
+        );
+        return supported;
+    }
+
+    bool element_assignment_accepts(const array& destination, const array_traits::value_type& value)
+    {
+        using variant_type = typename array_traits::value_type::base_type;
+        const auto& value_variant = static_cast<const variant_type&>(value);
+
+        bool accepts = false;
+        destination.visit(
+            [&](const auto& destination_impl)
+            {
+                using destination_array_type = std::decay_t<decltype(destination_impl)>;
+                if constexpr (supports_element_assign_v<destination_array_type>)
+                {
+                    using expected_type = typename destination_array_type::value_type;
+                    if constexpr (mpl::contains<mpl::rename<variant_type, mpl::typelist>, expected_type>())
+                    {
+                        accepts = std::holds_alternative<expected_type>(value_variant);
+                    }
+                }
+            }
+        );
+        return accepts;
+    }
+
+    void set_element(array& destination, std::size_t pos, const array_traits::value_type& value)
+    {
+        using value_variant_type = typename array_traits::value_type::base_type;
+
+        destination.visit(
+            [&](const auto& destination_impl)
+            {
+                using destination_array_type = std::decay_t<decltype(destination_impl)>;
+                const std::string destination_format{
+                    data_type_to_format(detail::get_data_type_from_array<destination_array_type>::get())
+                };
+                if constexpr (supports_element_assign_v<destination_array_type>)
+                {
+                    bool assigned = false;
+                    std::visit(
+                        [&](const auto& typed_value)
+                        {
+                            if constexpr (std::same_as<
+                                              std::decay_t<decltype(typed_value)>,
+                                              typename destination_array_type::value_type>)
+                            {
+                                SPARROW_ASSERT_TRUE(pos < destination_impl.size());
+                                // The layout is owned by a mutable array: writing one element does
+                                // not change its length, so it writes through the very buffers the
+                                // array exposes (unlike insert, which may reallocate).
+                                auto& mutable_destination = const_cast<destination_array_type&>(destination_impl);
+                                mutable_destination[pos] = typed_value;
+                                assigned = true;
+                            }
+                        },
+                        static_cast<const value_variant_type&>(value)
+                    );
+
+                    if (!assigned)
+                    {
+                        throw std::invalid_argument(
+                            "set_element: value type does not match the destination array value "
+                            "type (destination format: "
+                            + destination_format + ")"
+                        );
+                    }
+                }
+                else
+                {
+                    throw std::runtime_error(
+                        "set_element: destination array does not support in-place element assignment "
                         "(destination format: "
                         + destination_format + ")"
                     );
