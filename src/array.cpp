@@ -14,6 +14,7 @@
 
 #include "sparrow/array.hpp"
 
+#include <cstring>
 #include <stdexcept>
 #include <type_traits>
 #include <vector>
@@ -29,6 +30,17 @@ namespace sparrow
 {
     namespace
     {
+        // Compares the dynamic types of two array wrappers.
+        //
+        // typeid(a) == typeid(b) is a pointer comparison under libc++ since C++11: with
+        // -fvisibility=hidden, the library and its client each keep their own type_info for the
+        // same type, so the comparison is false even when both objects are identical layouts.
+        // Comparing the mangled names is equivalent for identity and independent of the image.
+        bool same_dynamic_type(const array_wrapper& lhs, const array_wrapper& rhs)
+        {
+            return std::strcmp(typeid(lhs).name(), typeid(rhs).name()) == 0;
+        }
+
         template <class Array, class Iterator>
         void insert_repeated(
             Array& destination,
@@ -214,7 +226,7 @@ namespace sparrow
 
         const auto& destination_wrapper = *p_array;
         const auto& source_wrapper = *source.p_array;
-        SPARROW_ASSERT_TRUE(typeid(destination_wrapper) == typeid(source_wrapper));
+        SPARROW_ASSERT_TRUE(same_dynamic_type(destination_wrapper, source_wrapper));
         visit(
             [this, &source, pos_index, first_index, last_index, count](const auto& array_impl)
             {
