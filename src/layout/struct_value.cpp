@@ -16,7 +16,6 @@
 #include <stdexcept>
 
 #include "sparrow/layout/array_helper.hpp"
-#include "sparrow/layout/nested_value_types.hpp"
 #include "sparrow/layout/struct_value.hpp"
 
 namespace sparrow

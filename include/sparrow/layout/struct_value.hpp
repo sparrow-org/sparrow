@@ -24,6 +24,8 @@
 
 #include "sparrow/config/config.hpp"
 #include "sparrow/layout/layout_utils.hpp"
+#include "sparrow/layout/list_value.hpp"
+#include "sparrow/layout/map_value.hpp"
 #include "sparrow/layout/struct_const_reference.hpp"
 #include "sparrow/types/data_traits.hpp"
 #include "sparrow/utils/functor_index_iterator.hpp"
@@ -39,6 +41,13 @@ namespace sparrow
      *
      * Copying or moving a \c struct_value copies the fields; it never aliases the array.
      */
+// MSVC warns C4251 when a dllexport class holds std::vector members, whose
+// instantiation has no dll-interface. This is safe for an owning value type: the
+// members are only touched by the out-of-line methods of the library.
+#ifdef _MSC_VER
+#    pragma warning(push)
+#    pragma warning(disable : 4251)
+#endif
     class SPARROW_API struct_value
     {
     public:
@@ -98,6 +107,9 @@ namespace sparrow
         std::vector<value_type> m_fields;
         std::vector<std::optional<std::string>> m_names;
     };
+#ifdef _MSC_VER
+#    pragma warning(pop)
+#endif
 
     SPARROW_API
     bool operator==(const struct_value& lhs, const struct_value& rhs);

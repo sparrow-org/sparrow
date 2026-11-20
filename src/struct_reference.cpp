@@ -16,7 +16,6 @@
 
 #include <utility>
 
-#include "sparrow/layout/nested_value_types.hpp"
 #include "sparrow/struct_array.hpp"
 
 namespace sparrow
